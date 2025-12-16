@@ -6,9 +6,9 @@
 Unit tests for ragit.providers.ollama module.
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from requests import HTTPError
 
 from ragit.providers.ollama import OllamaProvider
 
@@ -27,10 +27,7 @@ class TestOllamaProviderInit:
     def test_custom_initialization(self):
         """Test provider with custom parameters."""
         provider = OllamaProvider(
-            base_url="http://custom:8080/",
-            embedding_url="http://embed:9090/",
-            api_key="test-key",
-            timeout=60
+            base_url="http://custom:8080/", embedding_url="http://embed:9090/", api_key="test-key", timeout=60
         )
 
         assert provider.base_url == "http://custom:8080"  # trailing slash stripped
@@ -40,10 +37,7 @@ class TestOllamaProviderInit:
 
     def test_strips_trailing_slash(self):
         """Test that trailing slashes are stripped from URLs."""
-        provider = OllamaProvider(
-            base_url="http://test:11434///",
-            embedding_url="http://embed:11434//"
-        )
+        provider = OllamaProvider(base_url="http://test:11434///", embedding_url="http://embed:11434//")
 
         assert not provider.base_url.endswith("/")
         assert not provider.embedding_url.endswith("/")
@@ -63,10 +57,7 @@ class TestOllamaProviderHeaders:
     def test_headers_without_api_key(self):
         """Test headers when no API key is set."""
         # Explicitly set api_key to None to override any env var
-        provider = OllamaProvider(
-            base_url="http://test:11434",
-            api_key=None
-        )
+        provider = OllamaProvider(base_url="http://test:11434", api_key=None)
         # Force api_key to None (in case config loaded one from env)
         provider.api_key = None
         headers = provider._get_headers(include_auth=True)
@@ -88,8 +79,6 @@ class TestOllamaProviderDimensions:
 
     def test_known_model_dimensions(self):
         """Test dimensions for known embedding models."""
-        provider = OllamaProvider()
-
         # Access the class-level constant
         assert OllamaProvider.EMBEDDING_DIMENSIONS["nomic-embed-text"] == 768
         assert OllamaProvider.EMBEDDING_DIMENSIONS["mxbai-embed-large"] == 1024
@@ -124,6 +113,7 @@ class TestOllamaProviderIsAvailable:
 
         with patch("requests.get") as mock_get:
             from requests import RequestException
+
             mock_get.side_effect = RequestException("Connection failed")
 
             assert provider.is_available() is False
@@ -139,12 +129,7 @@ class TestOllamaProviderListModels:
         with patch("requests.get") as mock_get:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {
-                "models": [
-                    {"name": "llama3"},
-                    {"name": "mxbai-embed-large"}
-                ]
-            }
+            mock_resp.json.return_value = {"models": [{"name": "llama3"}, {"name": "mxbai-embed-large"}]}
             mock_resp.raise_for_status.return_value = None
             mock_get.return_value = mock_resp
 
@@ -159,6 +144,7 @@ class TestOllamaProviderListModels:
 
         with patch("requests.get") as mock_get:
             from requests import RequestException
+
             mock_get.side_effect = RequestException("Failed")
 
             with pytest.raises(ConnectionError, match="Failed to list Ollama models"):
@@ -180,17 +166,13 @@ class TestOllamaProviderGenerate:
                 "model": "llama3",
                 "prompt_eval_count": 10,
                 "eval_count": 5,
-                "total_duration": 1000000000
+                "total_duration": 1000000000,
             }
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
             response = provider.generate(
-                prompt="Say hello",
-                model="llama3",
-                system_prompt="Be friendly",
-                temperature=0.5,
-                max_tokens=100
+                prompt="Say hello", model="llama3", system_prompt="Be friendly", temperature=0.5, max_tokens=100
             )
 
             assert response.text == "Hello, world!"
@@ -232,6 +214,7 @@ class TestOllamaProviderGenerate:
 
         with patch("requests.post") as mock_post:
             from requests import RequestException
+
             mock_post.side_effect = RequestException("Failed")
 
             with pytest.raises(ConnectionError, match="Ollama generate failed"):
@@ -249,10 +232,7 @@ class TestOllamaProviderEmbed:
             embedding = [0.1] * 1024
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {
-                "embeddings": [embedding],
-                "model": "mxbai-embed-large"
-            }
+            mock_resp.json.return_value = {"embeddings": [embedding], "model": "mxbai-embed-large"}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
@@ -305,6 +285,7 @@ class TestOllamaProviderEmbed:
 
         with patch("requests.post") as mock_post:
             from requests import RequestException
+
             mock_post.side_effect = RequestException("Failed")
 
             with pytest.raises(ConnectionError, match="Ollama embed failed"):
@@ -322,17 +303,11 @@ class TestOllamaProviderEmbedBatch:
             embeddings = [[0.1] * 1024, [0.2] * 1024, [0.3] * 1024]
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {
-                "embeddings": embeddings,
-                "model": "mxbai-embed-large"
-            }
+            mock_resp.json.return_value = {"embeddings": embeddings, "model": "mxbai-embed-large"}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
-            responses = provider.embed_batch(
-                texts=["Hello", "World", "Test"],
-                model="mxbai-embed-large"
-            )
+            responses = provider.embed_batch(texts=["Hello", "World", "Test"], model="mxbai-embed-large")
 
             assert len(responses) == 3
             assert responses[0].embedding == embeddings[0]
@@ -344,6 +319,7 @@ class TestOllamaProviderEmbedBatch:
 
         with patch("requests.post") as mock_post:
             from requests import RequestException
+
             mock_post.side_effect = RequestException("Failed")
 
             with pytest.raises(ConnectionError, match="Ollama batch embed failed"):
@@ -364,21 +340,14 @@ class TestOllamaProviderChat:
                 "message": {"content": "I'm doing well!", "role": "assistant"},
                 "model": "llama3",
                 "prompt_eval_count": 15,
-                "eval_count": 10
+                "eval_count": 10,
             }
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
-            messages = [
-                {"role": "user", "content": "How are you?"}
-            ]
+            messages = [{"role": "user", "content": "How are you?"}]
 
-            response = provider.chat(
-                messages=messages,
-                model="llama3",
-                temperature=0.5,
-                max_tokens=100
-            )
+            response = provider.chat(messages=messages, model="llama3", temperature=0.5, max_tokens=100)
 
             assert response.text == "I'm doing well!"
             assert response.model == "llama3"
@@ -396,6 +365,7 @@ class TestOllamaProviderChat:
 
         with patch("requests.post") as mock_post:
             from requests import RequestException
+
             mock_post.side_effect = RequestException("Failed")
 
             with pytest.raises(ConnectionError, match="Ollama chat failed"):

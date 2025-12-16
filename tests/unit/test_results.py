@@ -7,6 +7,7 @@ Unit tests for ragit.core.experiment.results module.
 """
 
 import pytest
+
 from ragit.core.experiment.results import EvaluationResult, ExperimentResults
 
 
@@ -17,13 +18,9 @@ def sample_evaluation_result():
         pattern_name="Pattern_1",
         indexing_params={"chunk_size": 256, "chunk_overlap": 50, "embedding_model": "test"},
         inference_params={"num_chunks": 3, "llm_model": "test"},
-        scores={
-            "answer_correctness": {"mean": 0.8},
-            "context_relevance": {"mean": 0.7},
-            "faithfulness": {"mean": 0.9}
-        },
+        scores={"answer_correctness": {"mean": 0.8}, "context_relevance": {"mean": 0.7}, "faithfulness": {"mean": 0.9}},
         execution_time=10.5,
-        final_score=0.85
+        final_score=0.85,
     )
 
 
@@ -37,7 +34,7 @@ def multiple_results():
             inference_params={"num_chunks": 3},
             scores={},
             execution_time=10.0,
-            final_score=0.70
+            final_score=0.70,
         ),
         EvaluationResult(
             pattern_name="Pattern_2",
@@ -45,7 +42,7 @@ def multiple_results():
             inference_params={"num_chunks": 5},
             scores={},
             execution_time=15.0,
-            final_score=0.90
+            final_score=0.90,
         ),
         EvaluationResult(
             pattern_name="Pattern_3",
@@ -53,7 +50,7 @@ def multiple_results():
             inference_params={"num_chunks": 2},
             scores={},
             execution_time=8.0,
-            final_score=0.60
+            final_score=0.60,
         ),
     ]
 
@@ -93,20 +90,10 @@ class TestEvaluationResult:
     def test_equality(self):
         """Test EvaluationResult equality."""
         r1 = EvaluationResult(
-            pattern_name="P1",
-            indexing_params={},
-            inference_params={},
-            scores={},
-            execution_time=1.0,
-            final_score=0.5
+            pattern_name="P1", indexing_params={}, inference_params={}, scores={}, execution_time=1.0, final_score=0.5
         )
         r2 = EvaluationResult(
-            pattern_name="P1",
-            indexing_params={},
-            inference_params={},
-            scores={},
-            execution_time=1.0,
-            final_score=0.5
+            pattern_name="P1", indexing_params={}, inference_params={}, scores={}, execution_time=1.0, final_score=0.5
         )
 
         assert r1 == r2
@@ -185,10 +172,7 @@ class TestExperimentResults:
         """Test is_cached returns score when found."""
         results = ExperimentResults(evaluations=multiple_results)
 
-        score = results.is_cached(
-            indexing_params={"chunk_size": 512},
-            inference_params={"num_chunks": 5}
-        )
+        score = results.is_cached(indexing_params={"chunk_size": 512}, inference_params={"num_chunks": 5})
 
         assert score == 0.90
 
@@ -196,10 +180,7 @@ class TestExperimentResults:
         """Test is_cached returns None when not found."""
         results = ExperimentResults(evaluations=multiple_results)
 
-        score = results.is_cached(
-            indexing_params={"chunk_size": 999},
-            inference_params={"num_chunks": 99}
-        )
+        score = results.is_cached(indexing_params={"chunk_size": 999}, inference_params={"num_chunks": 99})
 
         assert score is None
 

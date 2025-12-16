@@ -12,12 +12,11 @@ Run with: pytest tests/integration/ -v --integration
 Skip with: pytest tests/integration/ -v -m "not integration"
 """
 
+import numpy as np
 import pytest
 import requests
-import numpy as np
 
 from ragit.config import config
-
 
 # Highway DSL documentation chunks for RAG
 DSL_DOCS = [
@@ -44,7 +43,7 @@ builder.join("validate", join_tasks=[...], join_mode=JoinMode.ALL_OF,
     dependencies=["wait"])
 ```
 
-If you forget the wait task, your workflow will continue immediately while branches are still running!"""
+If you forget the wait task, your workflow will continue immediately while branches are still running!""",
     },
     {
         "id": "workflow_builder_basics",
@@ -74,7 +73,7 @@ Task Chaining - Tasks are automatically chained unless dependencies are explicit
 ```python
 builder.task("task1", "tools.shell.run", args=["echo 'First'"])
 builder.task("task2", "tools.shell.run", args=["echo 'Second'"])  # Runs after task1
-```"""
+```""",
     },
     {
         "id": "task_operator",
@@ -110,7 +109,7 @@ builder.task(
     },
     result_key="api_response"
 )
-```"""
+```""",
     },
 ]
 
@@ -134,8 +133,15 @@ def check_ollama_available(url: str, timeout: int = 5) -> bool:
 class HighwayDSLAssistant:
     """RAG-powered Highway DSL assistant for testing."""
 
-    def __init__(self, docs: list[dict], embedding_url: str, llm_url: str,
-                 api_key: str | None, embedding_model: str, llm_model: str):
+    def __init__(
+        self,
+        docs: list[dict],
+        embedding_url: str,
+        llm_url: str,
+        api_key: str | None,
+        embedding_model: str,
+        llm_model: str,
+    ):
         self.docs = docs
         self.embedding_url = embedding_url
         self.llm_url = llm_url
@@ -157,7 +163,7 @@ class HighwayDSLAssistant:
             f"{self.embedding_url}/api/embed",
             headers=self._get_headers(include_auth=False),  # Local embeddings, no auth
             json={"model": self.embedding_model, "input": text},
-            timeout=60
+            timeout=60,
         )
         resp.raise_for_status()
         return resp.json()["embeddings"][0]
@@ -167,13 +173,8 @@ class HighwayDSLAssistant:
         resp = requests.post(
             f"{self.llm_url}/api/generate",
             headers=self._get_headers(include_auth=True),
-            json={
-                "model": self.llm_model,
-                "prompt": prompt,
-                "system": system,
-                "stream": False
-            },
-            timeout=180
+            json={"model": self.llm_model, "prompt": prompt, "system": system, "stream": False},
+            timeout=180,
         )
         resp.raise_for_status()
         return resp.json()["response"]
@@ -189,10 +190,7 @@ class HighwayDSLAssistant:
     def retrieve(self, query: str, top_k: int = 3) -> list[tuple[dict, float]]:
         """Retrieve relevant documents."""
         query_emb = self._embed(query)
-        scores = [
-            (doc, cosine_similarity(query_emb, doc["embedding"]))
-            for doc in self.index
-        ]
+        scores = [(doc, cosine_similarity(query_emb, doc["embedding"])) for doc in self.index]
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores[:top_k]
 
@@ -203,10 +201,7 @@ class HighwayDSLAssistant:
         retrieved_ids = [doc["id"] for doc, _ in retrieved]
 
         # Build context
-        context = "\n\n---\n\n".join([
-            f"### {doc['title']}\n{doc['content']}"
-            for doc, _ in retrieved
-        ])
+        context = "\n\n---\n\n".join([f"### {doc['title']}\n{doc['content']}" for doc, _ in retrieved])
 
         # Generate answer
         system = """You are a Highway DSL expert. Generate valid Python code.
@@ -324,9 +319,7 @@ class TestHighwayRAGAssistant:
 
     def test_ask_generates_code(self, assistant):
         """Test that ask generates Python code."""
-        code, retrieved_ids = assistant.ask(
-            "Write a simple workflow that runs a shell command"
-        )
+        code, retrieved_ids = assistant.ask("Write a simple workflow that runs a shell command")
 
         assert len(code) > 0
         # Should contain workflow-related code
@@ -334,9 +327,7 @@ class TestHighwayRAGAssistant:
 
     def test_ask_parallel_workflow(self, assistant):
         """Test generating a parallel workflow."""
-        code, retrieved_ids = assistant.ask(
-            "Write a parallel workflow that runs 2 tasks concurrently"
-        )
+        code, retrieved_ids = assistant.ask("Write a parallel workflow that runs 2 tasks concurrently")
 
         assert len(code) > 0
         # Should retrieve parallel docs

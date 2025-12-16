@@ -35,7 +35,9 @@ class Config:
     OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 
     # Ollama Embedding API Configuration (cloud doesn't support embeddings, use local)
-    OLLAMA_EMBEDDING_URL: str = os.getenv("OLLAMA_EMBEDDING_URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+    OLLAMA_EMBEDDING_URL: str = os.getenv(
+        "OLLAMA_EMBEDDING_URL", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    )
 
     # Default Models
     DEFAULT_LLM_MODEL: str = os.getenv("RAGIT_DEFAULT_LLM_MODEL", "qwen3-vl:235b-instruct")

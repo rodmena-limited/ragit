@@ -6,18 +6,19 @@
 Unit tests for ragit.core.experiment.experiment module.
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
 import numpy as np
+import pytest
 
 from ragit.core.experiment.experiment import (
-    RAGConfig,
-    Document,
-    Chunk,
     BenchmarkQuestion,
+    Chunk,
+    Document,
     EvaluationScores,
-    SimpleVectorStore,
+    RAGConfig,
     RagitExperiment,
+    SimpleVectorStore,
 )
 
 
@@ -27,12 +28,7 @@ class TestRAGConfig:
     def test_creation(self):
         """Test creating a RAGConfig."""
         config = RAGConfig(
-            name="Test",
-            chunk_size=256,
-            chunk_overlap=50,
-            num_chunks=3,
-            embedding_model="embed",
-            llm_model="llm"
+            name="Test", chunk_size=256, chunk_overlap=50, num_chunks=3, embedding_model="embed", llm_model="llm"
         )
 
         assert config.name == "Test"
@@ -54,11 +50,7 @@ class TestDocument:
 
     def test_with_metadata(self):
         """Test Document with metadata."""
-        doc = Document(
-            id="doc1",
-            content="Content",
-            metadata={"source": "test.txt", "author": "Test"}
-        )
+        doc = Document(id="doc1", content="Content", metadata={"source": "test.txt", "author": "Test"})
 
         assert doc.metadata["source"] == "test.txt"
 
@@ -68,11 +60,7 @@ class TestChunk:
 
     def test_creation(self):
         """Test creating a Chunk."""
-        chunk = Chunk(
-            content="chunk text",
-            doc_id="doc1",
-            chunk_index=0
-        )
+        chunk = Chunk(content="chunk text", doc_id="doc1", chunk_index=0)
 
         assert chunk.content == "chunk text"
         assert chunk.doc_id == "doc1"
@@ -82,12 +70,7 @@ class TestChunk:
     def test_with_embedding(self):
         """Test Chunk with embedding."""
         embedding = [0.1, 0.2, 0.3]
-        chunk = Chunk(
-            content="text",
-            doc_id="doc1",
-            chunk_index=0,
-            embedding=embedding
-        )
+        chunk = Chunk(content="text", doc_id="doc1", chunk_index=0, embedding=embedding)
 
         assert chunk.embedding == embedding
 
@@ -97,10 +80,7 @@ class TestBenchmarkQuestion:
 
     def test_creation(self):
         """Test creating a BenchmarkQuestion."""
-        qa = BenchmarkQuestion(
-            question="What is AI?",
-            ground_truth="Artificial intelligence"
-        )
+        qa = BenchmarkQuestion(question="What is AI?", ground_truth="Artificial intelligence")
 
         assert qa.question == "What is AI?"
         assert qa.ground_truth == "Artificial intelligence"
@@ -108,11 +88,7 @@ class TestBenchmarkQuestion:
 
     def test_with_relevant_docs(self):
         """Test BenchmarkQuestion with relevant docs."""
-        qa = BenchmarkQuestion(
-            question="Q",
-            ground_truth="A",
-            relevant_doc_ids=["doc1", "doc2"]
-        )
+        qa = BenchmarkQuestion(question="Q", ground_truth="A", relevant_doc_ids=["doc1", "doc2"])
 
         assert qa.relevant_doc_ids == ["doc1", "doc2"]
 
@@ -122,11 +98,7 @@ class TestEvaluationScores:
 
     def test_creation(self):
         """Test creating EvaluationScores."""
-        scores = EvaluationScores(
-            answer_correctness=0.8,
-            context_relevance=0.7,
-            faithfulness=0.9
-        )
+        scores = EvaluationScores(answer_correctness=0.8, context_relevance=0.7, faithfulness=0.9)
 
         assert scores.answer_correctness == 0.8
         assert scores.context_relevance == 0.7
@@ -134,22 +106,14 @@ class TestEvaluationScores:
 
     def test_combined_score(self):
         """Test combined score calculation."""
-        scores = EvaluationScores(
-            answer_correctness=1.0,
-            context_relevance=1.0,
-            faithfulness=1.0
-        )
+        scores = EvaluationScores(answer_correctness=1.0, context_relevance=1.0, faithfulness=1.0)
 
         # 0.4*1.0 + 0.3*1.0 + 0.3*1.0 = 1.0
         assert scores.combined_score == 1.0
 
     def test_combined_score_weighted(self):
         """Test combined score with different values."""
-        scores = EvaluationScores(
-            answer_correctness=0.5,
-            context_relevance=0.5,
-            faithfulness=0.5
-        )
+        scores = EvaluationScores(answer_correctness=0.5, context_relevance=0.5, faithfulness=0.5)
 
         # 0.4*0.5 + 0.3*0.5 + 0.3*0.5 = 0.5
         assert scores.combined_score == 0.5
@@ -289,19 +253,12 @@ class TestRagitExperiment:
     def simple_benchmark(self):
         """Create simple benchmark questions."""
         return [
-            BenchmarkQuestion(
-                question="What is Python?",
-                ground_truth="Python is a programming language."
-            ),
+            BenchmarkQuestion(question="What is Python?", ground_truth="Python is a programming language."),
         ]
 
     def test_init(self, simple_documents, simple_benchmark, mock_provider):
         """Test RagitExperiment initialization."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         assert experiment.documents == simple_documents
         assert experiment.benchmark == simple_benchmark
@@ -309,11 +266,7 @@ class TestRagitExperiment:
 
     def test_define_search_space_defaults(self, simple_documents, simple_benchmark, mock_provider):
         """Test default search space generation."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         configs = experiment.define_search_space()
 
@@ -324,18 +277,14 @@ class TestRagitExperiment:
 
     def test_define_search_space_custom(self, simple_documents, simple_benchmark, mock_provider):
         """Test custom search space generation."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         configs = experiment.define_search_space(
             chunk_sizes=[100, 200],
             chunk_overlaps=[20],
             num_chunks_options=[2],
             embedding_models=["embed"],
-            llm_models=["llm"]
+            llm_models=["llm"],
         )
 
         assert len(configs) == 2  # 2 chunk sizes * 1 overlap * 1 num_chunks * 1 embed * 1 llm
@@ -344,29 +293,21 @@ class TestRagitExperiment:
 
     def test_define_search_space_filters_invalid(self, simple_documents, simple_benchmark, mock_provider):
         """Test that invalid configs (overlap >= chunk_size) are filtered."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         configs = experiment.define_search_space(
             chunk_sizes=[50],
             chunk_overlaps=[50, 100],  # Both >= chunk_size
             num_chunks_options=[2],
             embedding_models=["e"],
-            llm_models=["l"]
+            llm_models=["l"],
         )
 
         assert len(configs) == 0
 
     def test_chunk_document(self, simple_documents, simple_benchmark, mock_provider):
         """Test document chunking."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         doc = Document(id="test", content="A" * 100)
         chunks = experiment._chunk_document(doc, chunk_size=30, overlap=10)
@@ -377,11 +318,7 @@ class TestRagitExperiment:
 
     def test_chunk_document_overlap(self, simple_documents, simple_benchmark, mock_provider):
         """Test that chunks overlap correctly."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         doc = Document(id="test", content="0123456789" * 10)  # 100 chars
         chunks = experiment._chunk_document(doc, chunk_size=20, overlap=5)
@@ -393,19 +330,10 @@ class TestRagitExperiment:
 
     def test_build_index(self, simple_documents, simple_benchmark, mock_provider):
         """Test index building."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         config = RAGConfig(
-            name="Test",
-            chunk_size=50,
-            chunk_overlap=10,
-            num_chunks=2,
-            embedding_model="embed",
-            llm_model="llm"
+            name="Test", chunk_size=50, chunk_overlap=10, num_chunks=2, embedding_model="embed", llm_model="llm"
         )
 
         experiment._build_index(config)
@@ -416,19 +344,10 @@ class TestRagitExperiment:
 
     def test_retrieve(self, simple_documents, simple_benchmark, mock_provider):
         """Test retrieval."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         config = RAGConfig(
-            name="Test",
-            chunk_size=100,
-            chunk_overlap=20,
-            num_chunks=2,
-            embedding_model="embed",
-            llm_model="llm"
+            name="Test", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
         )
 
         experiment._build_index(config)
@@ -439,25 +358,14 @@ class TestRagitExperiment:
 
     def test_generate(self, simple_documents, simple_benchmark, mock_provider):
         """Test generation."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         config = RAGConfig(
-            name="Test",
-            chunk_size=100,
-            chunk_overlap=20,
-            num_chunks=2,
-            embedding_model="embed",
-            llm_model="llm"
+            name="Test", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
         )
 
         answer = experiment._generate(
-            question="What is Python?",
-            context="Python is a programming language.",
-            config=config
+            question="What is Python?", context="Python is a programming language.", config=config
         )
 
         assert isinstance(answer, str)
@@ -465,19 +373,10 @@ class TestRagitExperiment:
 
     def test_evaluate_response(self, simple_documents, simple_benchmark, mock_provider):
         """Test response evaluation."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         config = RAGConfig(
-            name="Test",
-            chunk_size=100,
-            chunk_overlap=20,
-            num_chunks=2,
-            embedding_model="embed",
-            llm_model="llm"
+            name="Test", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
         )
 
         scores = experiment._evaluate_response(
@@ -485,7 +384,7 @@ class TestRagitExperiment:
             generated="Python is a programming language.",
             ground_truth="Python is a programming language.",
             context="Some context",
-            config=config
+            config=config,
         )
 
         assert isinstance(scores, EvaluationScores)
@@ -495,19 +394,10 @@ class TestRagitExperiment:
 
     def test_evaluate_config(self, simple_documents, simple_benchmark, mock_provider):
         """Test evaluating a configuration."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         config = RAGConfig(
-            name="TestConfig",
-            chunk_size=100,
-            chunk_overlap=20,
-            num_chunks=2,
-            embedding_model="embed",
-            llm_model="llm"
+            name="TestConfig", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
         )
 
         result = experiment.evaluate_config(config, verbose=False)
@@ -518,28 +408,14 @@ class TestRagitExperiment:
 
     def test_run(self, simple_documents, simple_benchmark, mock_provider):
         """Test running the experiment."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         configs = [
             RAGConfig(
-                name="Config1",
-                chunk_size=100,
-                chunk_overlap=20,
-                num_chunks=2,
-                embedding_model="embed",
-                llm_model="llm"
+                name="Config1", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
             ),
             RAGConfig(
-                name="Config2",
-                chunk_size=50,
-                chunk_overlap=10,
-                num_chunks=1,
-                embedding_model="embed",
-                llm_model="llm"
+                name="Config2", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="embed", llm_model="llm"
             ),
         ]
 
@@ -551,11 +427,7 @@ class TestRagitExperiment:
 
     def test_run_with_max_configs(self, simple_documents, simple_benchmark, mock_provider):
         """Test running with max_configs limit."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         configs = experiment.define_search_space()
         results = experiment.run(configs=configs, max_configs=1, verbose=False)
@@ -564,23 +436,14 @@ class TestRagitExperiment:
 
     def test_get_best_config(self, simple_documents, simple_benchmark, mock_provider):
         """Test getting best configuration."""
-        experiment = RagitExperiment(
-            documents=simple_documents,
-            benchmark=simple_benchmark,
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
 
         # Before running, should return None
         assert experiment.get_best_config() is None
 
         configs = [
             RAGConfig(
-                name="Config1",
-                chunk_size=100,
-                chunk_overlap=20,
-                num_chunks=2,
-                embedding_model="embed",
-                llm_model="llm"
+                name="Config1", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
             ),
         ]
 
@@ -629,15 +492,10 @@ class TestRagitExperimentVerbose:
 
         experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider)
         config = RAGConfig(
-            name="VerboseTest",
-            chunk_size=100,
-            chunk_overlap=10,
-            num_chunks=1,
-            embedding_model="embed",
-            llm_model="llm"
+            name="VerboseTest", chunk_size=100, chunk_overlap=10, num_chunks=1, embedding_model="embed", llm_model="llm"
         )
 
-        result = experiment.evaluate_config(config, verbose=True)
+        experiment.evaluate_config(config, verbose=True)
 
         captured = capsys.readouterr()
         assert "VerboseTest" in captured.out
@@ -649,14 +507,9 @@ class TestRagitExperimentVerbose:
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
         experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider)
-        configs = [RAGConfig(
-            name="Test",
-            chunk_size=50,
-            chunk_overlap=10,
-            num_chunks=1,
-            embedding_model="e",
-            llm_model="l"
-        )]
+        configs = [
+            RAGConfig(name="Test", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="e", llm_model="l")
+        ]
 
         experiment.run(configs=configs, verbose=True)
 
@@ -696,6 +549,7 @@ class TestScoreExtraction:
 
     def test_score_extraction_no_number(self, mock_provider_scores):
         """Test score extraction when no number in response."""
+
         def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
             response = MagicMock()
             response.text = "no numbers here"
@@ -706,13 +560,8 @@ class TestScoreExtraction:
         docs = [Document(id="d1", content="Content")]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(
-            documents=docs, benchmark=bench, provider=mock_provider_scores
-        )
-        config = RAGConfig(
-            name="T", chunk_size=50, chunk_overlap=10, num_chunks=1,
-            embedding_model="e", llm_model="l"
-        )
+        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider_scores)
+        config = RAGConfig(name="T", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="e", llm_model="l")
 
         experiment._build_index(config)
         scores = experiment._evaluate_response("Q", "A", "A", "ctx", config)
@@ -722,6 +571,7 @@ class TestScoreExtraction:
 
     def test_score_extraction_decimal(self, mock_provider_scores):
         """Test score extraction with decimal number."""
+
         def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
             response = MagicMock()
             response.text = "Score: 85.5 out of 100"
@@ -732,13 +582,8 @@ class TestScoreExtraction:
         docs = [Document(id="d1", content="Content")]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(
-            documents=docs, benchmark=bench, provider=mock_provider_scores
-        )
-        config = RAGConfig(
-            name="T", chunk_size=50, chunk_overlap=10, num_chunks=1,
-            embedding_model="e", llm_model="l"
-        )
+        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider_scores)
+        config = RAGConfig(name="T", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="e", llm_model="l")
 
         experiment._build_index(config)
         scores = experiment._evaluate_response("Q", "A", "A", "ctx", config)
@@ -747,6 +592,7 @@ class TestScoreExtraction:
 
     def test_score_extraction_over_100(self, mock_provider_scores):
         """Test score extraction with value over 100."""
+
         def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
             response = MagicMock()
             response.text = "150"  # Over 100, should be capped
@@ -757,13 +603,8 @@ class TestScoreExtraction:
         docs = [Document(id="d1", content="Content")]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(
-            documents=docs, benchmark=bench, provider=mock_provider_scores
-        )
-        config = RAGConfig(
-            name="T", chunk_size=50, chunk_overlap=10, num_chunks=1,
-            embedding_model="e", llm_model="l"
-        )
+        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider_scores)
+        config = RAGConfig(name="T", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="e", llm_model="l")
 
         experiment._build_index(config)
         scores = experiment._evaluate_response("Q", "A", "A", "ctx", config)
@@ -783,11 +624,7 @@ class TestChunkingEdgeCases:
 
     def test_chunk_empty_document(self, mock_provider):
         """Test chunking an empty document."""
-        experiment = RagitExperiment(
-            documents=[],
-            benchmark=[],
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=[], benchmark=[], provider=mock_provider)
 
         doc = Document(id="empty", content="")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)
@@ -796,11 +633,7 @@ class TestChunkingEdgeCases:
 
     def test_chunk_whitespace_only(self, mock_provider):
         """Test chunking whitespace-only document."""
-        experiment = RagitExperiment(
-            documents=[],
-            benchmark=[],
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=[], benchmark=[], provider=mock_provider)
 
         doc = Document(id="ws", content="   \n\t  ")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)
@@ -809,11 +642,7 @@ class TestChunkingEdgeCases:
 
     def test_chunk_small_document(self, mock_provider):
         """Test chunking document smaller than chunk size."""
-        experiment = RagitExperiment(
-            documents=[],
-            benchmark=[],
-            provider=mock_provider
-        )
+        experiment = RagitExperiment(documents=[], benchmark=[], provider=mock_provider)
 
         doc = Document(id="small", content="Hello")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)

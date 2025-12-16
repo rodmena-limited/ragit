@@ -11,6 +11,7 @@ This module provides the main experiment class for optimizing RAG hyperparameter
 import time
 from dataclasses import dataclass, field
 from itertools import product
+from typing import Any
 
 import numpy as np
 from tqdm import tqdm
@@ -38,7 +39,7 @@ class Document:
 
     id: str
     content: str
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -403,9 +404,9 @@ Respond with ONLY a number 0-100."""
                 "llm_model": config.llm_model,
             },
             scores={
-                "answer_correctness": {"mean": avg_correctness},
-                "context_relevance": {"mean": avg_relevance},
-                "faithfulness": {"mean": avg_faithfulness},
+                "answer_correctness": {"mean": float(avg_correctness)},
+                "context_relevance": {"mean": float(avg_relevance)},
+                "faithfulness": {"mean": float(avg_faithfulness)},
             },
             execution_time=execution_time,
             final_score=float(combined),

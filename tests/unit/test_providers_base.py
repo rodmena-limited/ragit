@@ -7,11 +7,12 @@ Unit tests for ragit.providers.base module.
 """
 
 import pytest
+
 from ragit.providers.base import (
-    LLMResponse,
-    EmbeddingResponse,
-    BaseLLMProvider,
     BaseEmbeddingProvider,
+    BaseLLMProvider,
+    EmbeddingResponse,
+    LLMResponse,
 )
 
 
@@ -21,10 +22,7 @@ class TestLLMResponse:
     def test_llm_response_creation(self):
         """Test creating an LLMResponse."""
         response = LLMResponse(
-            text="Hello world",
-            model="llama3",
-            provider="ollama",
-            usage={"prompt_tokens": 10, "completion_tokens": 5}
+            text="Hello world", model="llama3", provider="ollama", usage={"prompt_tokens": 10, "completion_tokens": 5}
         )
 
         assert response.text == "Hello world"
@@ -34,11 +32,7 @@ class TestLLMResponse:
 
     def test_llm_response_without_usage(self):
         """Test LLMResponse with no usage info."""
-        response = LLMResponse(
-            text="Test",
-            model="model",
-            provider="provider"
-        )
+        response = LLMResponse(text="Test", model="model", provider="provider")
 
         assert response.usage is None
 
@@ -56,12 +50,7 @@ class TestEmbeddingResponse:
     def test_embedding_response_creation(self):
         """Test creating an EmbeddingResponse."""
         embedding = [0.1, 0.2, 0.3]
-        response = EmbeddingResponse(
-            embedding=embedding,
-            model="nomic-embed-text",
-            provider="ollama",
-            dimensions=3
-        )
+        response = EmbeddingResponse(embedding=embedding, model="nomic-embed-text", provider="ollama", dimensions=3)
 
         assert response.embedding == embedding
         assert response.model == "nomic-embed-text"
@@ -71,12 +60,7 @@ class TestEmbeddingResponse:
     def test_embedding_response_dimensions(self):
         """Test that dimensions matches embedding length."""
         embedding = [0.0] * 768
-        response = EmbeddingResponse(
-            embedding=embedding,
-            model="nomic-embed-text",
-            provider="ollama",
-            dimensions=768
-        )
+        response = EmbeddingResponse(embedding=embedding, model="nomic-embed-text", provider="ollama", dimensions=768)
 
         assert len(response.embedding) == response.dimensions
 
@@ -134,10 +118,7 @@ class TestBaseEmbeddingProvider:
 
             def embed(self, text, model):
                 return EmbeddingResponse(
-                    embedding=[0.0] * 768,
-                    model=model,
-                    provider=self.provider_name,
-                    dimensions=768
+                    embedding=[0.0] * 768, model=model, provider=self.provider_name, dimensions=768
                 )
 
             def embed_batch(self, texts, model):

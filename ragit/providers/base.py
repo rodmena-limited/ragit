@@ -20,7 +20,7 @@ class LLMResponse:
     text: str
     model: str
     provider: str
-    usage: dict | None = None
+    usage: dict[str, int] | None = None
 
 
 @dataclass

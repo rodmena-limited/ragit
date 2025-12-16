@@ -35,7 +35,7 @@ class EvaluationResult:
     pattern_name: str
     indexing_params: dict[str, Any]
     inference_params: dict[str, Any]
-    scores: dict[str, dict]
+    scores: dict[str, dict[str, float]]
     execution_time: float
     final_score: float
 

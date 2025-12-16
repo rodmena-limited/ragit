@@ -14,11 +14,12 @@ from unittest.mock import patch
 def reload_config_module():
     """Helper to reload config module with fresh environment."""
     # Remove cached modules to force fresh reload
-    mods_to_remove = [k for k in sys.modules if k.startswith('ragit')]
+    mods_to_remove = [k for k in sys.modules if k.startswith("ragit")]
     for mod in mods_to_remove:
         del sys.modules[mod]
 
     import ragit.config as config_module
+
     return config_module
 
 
@@ -28,12 +29,16 @@ class TestConfig:
     def test_config_default_values(self):
         """Test that Config has sensible defaults when env vars not set."""
         # Mock load_dotenv to prevent loading .env file
-        with patch('dotenv.load_dotenv'):
+        with patch("dotenv.load_dotenv"):
             # Clear ALL relevant env vars
             env_vars_to_clear = [
-                "OLLAMA_BASE_URL", "OLLAMA_API_KEY", "OLLAMA_TIMEOUT",
-                "OLLAMA_EMBEDDING_URL", "RAGIT_DEFAULT_LLM_MODEL",
-                "RAGIT_DEFAULT_EMBEDDING_MODEL", "RAGIT_LOG_LEVEL"
+                "OLLAMA_BASE_URL",
+                "OLLAMA_API_KEY",
+                "OLLAMA_TIMEOUT",
+                "OLLAMA_EMBEDDING_URL",
+                "RAGIT_DEFAULT_LLM_MODEL",
+                "RAGIT_DEFAULT_EMBEDDING_MODEL",
+                "RAGIT_LOG_LEVEL",
             ]
             clean_env = {k: v for k, v in os.environ.items() if k not in env_vars_to_clear}
 
@@ -76,7 +81,7 @@ class TestConfig:
     def test_config_embedding_url_fallback(self):
         """Test that embedding URL falls back to base URL if not set."""
         # Mock load_dotenv to prevent loading .env file
-        with patch('dotenv.load_dotenv'):
+        with patch("dotenv.load_dotenv"):
             test_env = {
                 "OLLAMA_BASE_URL": "http://fallback:11434",
                 # OLLAMA_EMBEDDING_URL not set

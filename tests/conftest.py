@@ -6,10 +6,10 @@
 Shared pytest fixtures and mock helpers for ragit tests.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-import numpy as np
 
+import numpy as np
+import pytest
 
 # Sample embedding dimensions for different models
 EMBEDDING_DIMS = {
@@ -49,6 +49,7 @@ def mock_ollama_responses():
         mock_resp.raise_for_status.return_value = None
         if status_code >= 400:
             from requests import HTTPError
+
             mock_resp.raise_for_status.side_effect = HTTPError(f"HTTP {status_code}")
         return mock_resp
 
@@ -58,91 +59,115 @@ def mock_ollama_responses():
 @pytest.fixture
 def mock_embedding_response(mock_ollama_responses):
     """Create mock embedding API response."""
+
     def _create(model: str = "mxbai-embed-large", dim: int = None):
         if dim is None:
             dim = EMBEDDING_DIMS.get(model, 1024)
         embedding = make_mock_embedding(dim)
-        return mock_ollama_responses(200, {
-            "embeddings": [embedding],
-            "model": model,
-        })
+        return mock_ollama_responses(
+            200,
+            {
+                "embeddings": [embedding],
+                "model": model,
+            },
+        )
+
     return _create
 
 
 @pytest.fixture
 def mock_batch_embedding_response(mock_ollama_responses):
     """Create mock batch embedding API response."""
+
     def _create(count: int, model: str = "mxbai-embed-large", dim: int = None):
         if dim is None:
             dim = EMBEDDING_DIMS.get(model, 1024)
         embeddings = [make_mock_embedding(dim) for _ in range(count)]
-        return mock_ollama_responses(200, {
-            "embeddings": embeddings,
-            "model": model,
-        })
+        return mock_ollama_responses(
+            200,
+            {
+                "embeddings": embeddings,
+                "model": model,
+            },
+        )
+
     return _create
 
 
 @pytest.fixture
 def mock_generate_response(mock_ollama_responses):
     """Create mock LLM generate API response."""
+
     def _create(text: str = "Test response", model: str = "test-llm"):
-        return mock_ollama_responses(200, {
-            "response": text,
-            "model": model,
-            "prompt_eval_count": 10,
-            "eval_count": 20,
-            "total_duration": 1000000000,
-        })
+        return mock_ollama_responses(
+            200,
+            {
+                "response": text,
+                "model": model,
+                "prompt_eval_count": 10,
+                "eval_count": 20,
+                "total_duration": 1000000000,
+            },
+        )
+
     return _create
 
 
 @pytest.fixture
 def mock_chat_response(mock_ollama_responses):
     """Create mock LLM chat API response."""
+
     def _create(text: str = "Test chat response", model: str = "test-llm"):
-        return mock_ollama_responses(200, {
-            "message": {"content": text, "role": "assistant"},
-            "model": model,
-            "prompt_eval_count": 10,
-            "eval_count": 20,
-        })
+        return mock_ollama_responses(
+            200,
+            {
+                "message": {"content": text, "role": "assistant"},
+                "model": model,
+                "prompt_eval_count": 10,
+                "eval_count": 20,
+            },
+        )
+
     return _create
 
 
 @pytest.fixture
 def mock_tags_response(mock_ollama_responses):
     """Create mock models list API response."""
-    return mock_ollama_responses(200, {
-        "models": [
-            {"name": "llama3", "size": 1000000},
-            {"name": "mxbai-embed-large", "size": 500000},
-        ]
-    })
+    return mock_ollama_responses(
+        200,
+        {
+            "models": [
+                {"name": "llama3", "size": 1000000},
+                {"name": "mxbai-embed-large", "size": 500000},
+            ]
+        },
+    )
 
 
 @pytest.fixture
 def sample_documents():
     """Sample documents for testing."""
     from ragit import Document
+
     return [
         Document(
             id="doc1",
             content="Machine learning is a subset of artificial intelligence that enables systems to learn from data. "
-                   "Deep learning uses neural networks with many layers. Supervised learning requires labeled data.",
-            metadata={"source": "ml_intro.txt"}
+            "Deep learning uses neural networks with many layers. Supervised learning requires labeled data.",
+            metadata={"source": "ml_intro.txt"},
         ),
         Document(
             id="doc2",
             content="Python is a programming language known for its simplicity. "
-                   "It supports multiple paradigms including procedural, object-oriented, and functional programming.",
-            metadata={"source": "python_intro.txt"}
+            "It supports multiple paradigms including procedural, object-oriented, and functional programming.",
+            metadata={"source": "python_intro.txt"},
         ),
         Document(
             id="doc3",
             content="RAG combines retrieval with generation for more accurate AI responses. "
-                   "It retrieves relevant documents and uses them as context for the language model.",
-            metadata={"source": "rag_overview.txt"}
+            "It retrieves relevant documents and uses them as context for the language model.",
+            metadata={"source": "rag_overview.txt"},
         ),
     ]
 
@@ -151,16 +176,17 @@ def sample_documents():
 def sample_benchmark():
     """Sample benchmark questions for testing."""
     from ragit import BenchmarkQuestion
+
     return [
         BenchmarkQuestion(
             question="What is machine learning?",
             ground_truth="Machine learning is a subset of artificial intelligence that enables systems to learn from data.",
-            relevant_doc_ids=["doc1"]
+            relevant_doc_ids=["doc1"],
         ),
         BenchmarkQuestion(
             question="What is RAG?",
             ground_truth="RAG combines retrieval with generation for more accurate AI responses.",
-            relevant_doc_ids=["doc3"]
+            relevant_doc_ids=["doc3"],
         ),
     ]
 
@@ -169,6 +195,7 @@ def sample_benchmark():
 def sample_rag_config():
     """Sample RAG configuration for testing."""
     from ragit import RAGConfig
+
     return RAGConfig(
         name="TestPattern",
         chunk_size=256,
@@ -182,8 +209,7 @@ def sample_rag_config():
 @pytest.fixture
 def mock_ollama_provider(mock_embedding_response, mock_generate_response, mock_tags_response):
     """Create a fully mocked OllamaProvider."""
-    with patch("requests.post") as mock_post, \
-         patch("requests.get") as mock_get:
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
 
         def post_side_effect(url, **kwargs):
             if "/api/embed" in url:
@@ -192,6 +218,7 @@ def mock_ollama_provider(mock_embedding_response, mock_generate_response, mock_t
                 return mock_generate_response()
             elif "/api/chat" in url:
                 from unittest.mock import MagicMock
+
                 resp = MagicMock()
                 resp.status_code = 200
                 resp.json.return_value = {
@@ -206,6 +233,7 @@ def mock_ollama_provider(mock_embedding_response, mock_generate_response, mock_t
         mock_get.return_value = mock_tags_response
 
         from ragit import OllamaProvider
+
         provider = OllamaProvider(
             base_url="http://test:11434",
             embedding_url="http://test:11434",

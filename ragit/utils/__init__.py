@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import Hashable, Sequence
 from datetime import datetime
 from math import floor
+from typing import Any
 
 import pandas as pd
 
@@ -38,7 +39,7 @@ def get_hashable_repr(dct: dict[str, object]) -> tuple[tuple[str, object, float,
     return tuple(sorted(dict_unpacked, key=lambda it: (it[2], it[0])))
 
 
-def remove_duplicates(items: list[dict]) -> list[dict]:
+def remove_duplicates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Deduplicates list of provided dictionary items.
 
