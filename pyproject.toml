@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools", "wheel", "build"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ragit"
+description = "Automatic RAG Pattern Optimization Engine"
+authors = [{ name = "RODMENA LIMITED"}]
+maintainers = [
+    { name = "RODMENA LIMITED", email = "info@rodmena.com" },
+]
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+]
+keywords = [
+    "AI",
+    "RAG",
+    "LLM",
+    "GenAI",
+    "Optimization",
+    "Ollama"
+]
+license = "Apache-2.0"
+dynamic = ["version"]
+dependencies = [
+    "requests>=2.31.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "pydantic>=2.0.0",
+    "scikit-learn>=1.5.0",
+    "tqdm>=4.66.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/rodmena-limited/ragit"
+Repository = "https://github.com/rodmena-limited/ragit"
+Issues = "https://github.com/rodmena-limited/ragit/issues"
+
+[project.optional-dependencies]
+dev = [
+    "ragit[test]",
+    "pytest",
+    "pytest-cov",
+    "black",
+    "pylint",
+]
+
+test = ["pytest", "pytest-cov", "pytest-mock"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ragit.version.__version__" }
+
+[tool.setuptools.packages.find]
+exclude = ["tests*", "dev_utils*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+python_files = ["tests/*.py"]
+log_cli = false
+log_level = "INFO"
+
+[tool.black]
+line-length = 120
+
+[tool.pylint]
+disable = ["missing-module-docstring", "too-few-public-methods"]
+max-line-length = 120
+max-args = 8
+max-attributes = 12
