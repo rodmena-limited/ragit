@@ -64,9 +64,38 @@ exclude = ["tests*", "dev_utils*"]
 namespaces = false
 
 [tool.pytest.ini_options]
-python_files = ["tests/*.py"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 log_cli = false
 log_level = "INFO"
+addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests as integration tests (may require external services)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["ragit"]
+branch = true
+omit = [
+    "ragit/version.py",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+fail_under = 90
+show_missing = true
 
 [tool.ruff]
 line-length = 120
