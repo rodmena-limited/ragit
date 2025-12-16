@@ -5,10 +5,10 @@
 """Ragit experiment module."""
 
 from ragit.core.experiment.experiment import (
-    RagitExperiment,
-    Document,
     BenchmarkQuestion,
+    Document,
     RAGConfig,
+    RagitExperiment,
 )
 from ragit.core.experiment.results import EvaluationResult, ExperimentResults
 

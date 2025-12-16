@@ -10,9 +10,13 @@ by retrieving relevant documentation and generating accurate code.
 import requests
 import numpy as np
 
-OLLAMA_URL = "http://localhost:11434"
-LLM = "qwen3-vl:235b-instruct-cloud"
-EMBEDDER = "nomic-embed-text:latest"
+from ragit.config import config
+
+OLLAMA_LLM_URL = config.OLLAMA_BASE_URL
+OLLAMA_EMBEDDING_URL = config.OLLAMA_EMBEDDING_URL
+OLLAMA_API_KEY = config.OLLAMA_API_KEY
+LLM = config.DEFAULT_LLM_MODEL
+EMBEDDER = config.DEFAULT_EMBEDDING_MODEL
 
 # =============================================================================
 # HIGHWAY DSL DOCUMENTATION (chunked for RAG)
@@ -327,15 +331,26 @@ builder.task("wait_all", "tools.workflow.wait_for_parallel_branches",
 # RAG SYSTEM
 # =============================================================================
 
+def get_llm_headers():
+    headers = {"Content-Type": "application/json"}
+    if OLLAMA_API_KEY:
+        headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+    return headers
+
 def embed(text):
-    r = requests.post(f"{OLLAMA_URL}/api/embed",
+    """Use local Ollama for embeddings (cloud doesn't support embeddings)."""
+    r = requests.post(f"{OLLAMA_EMBEDDING_URL}/api/embed",
                       json={"model": EMBEDDER, "input": text}, timeout=60)
+    r.raise_for_status()
     return np.array(r.json()["embeddings"][0])
 
 def generate(prompt, system):
-    r = requests.post(f"{OLLAMA_URL}/api/generate",
+    """Use cloud Ollama for LLM generation."""
+    r = requests.post(f"{OLLAMA_LLM_URL}/api/generate",
+                      headers=get_llm_headers(),
                       json={"model": LLM, "prompt": prompt, "system": system, "stream": False},
                       timeout=180)
+    r.raise_for_status()
     return r.json()["response"]
 
 def cosine_sim(a, b):
@@ -420,12 +435,23 @@ def main():
 ╚═══════════════════════════════════════════════════════════════════════╝
 """)
 
-    # Verify connection
+    # Verify connections
     try:
-        requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
-        print(f"✓ Ollama connected | LLM: {LLM}")
-    except:
-        print("✗ Cannot connect to Ollama")
+        r = requests.get(f"{OLLAMA_LLM_URL}/api/tags", headers=get_llm_headers(), timeout=5)
+        r.raise_for_status()
+        print(f"✓ LLM (cloud): {OLLAMA_LLM_URL}")
+        print(f"  Model: {LLM}")
+    except Exception as e:
+        print(f"✗ Cannot connect to LLM cloud: {e}")
+        return
+
+    try:
+        r = requests.get(f"{OLLAMA_EMBEDDING_URL}/api/tags", timeout=5)
+        r.raise_for_status()
+        print(f"✓ Embeddings (local): {OLLAMA_EMBEDDING_URL}")
+        print(f"  Model: {EMBEDDER}")
+    except Exception as e:
+        print(f"✗ Cannot connect to local Ollama for embeddings: {e}")
         return
 
     # Initialize RAG assistant

@@ -6,8 +6,9 @@
 Ragit experiment results.
 """
 
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -44,9 +45,7 @@ class EvaluationResult:
 
     def __repr__(self) -> str:
         return (
-            f"EvaluationResult(name={self.pattern_name}, "
-            f"score={self.final_score:.3f}, "
-            f"time={self.execution_time:.1f}s)"
+            f"EvaluationResult(name={self.pattern_name}, score={self.final_score:.3f}, time={self.execution_time:.1f}s)"
         )
 
 
@@ -66,7 +65,7 @@ class ExperimentResults:
     def __len__(self) -> int:
         return len(self.evaluations)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[EvaluationResult]:
         yield from self.evaluations
 
     def __bool__(self) -> bool:
@@ -80,7 +79,7 @@ class ExperimentResults:
         self,
         indexing_params: dict[str, Any],
         inference_params: dict[str, Any],
-    ) -> Optional[float]:
+    ) -> float | None:
         """
         Check if this configuration was already evaluated.
 

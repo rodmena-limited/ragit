@@ -11,18 +11,19 @@ This module provides the main experiment class for optimizing RAG hyperparameter
 import time
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Optional
 
 import numpy as np
 from tqdm import tqdm
 
-from ragit.providers import OllamaProvider
+from ragit.config import config
 from ragit.core.experiment.results import EvaluationResult
+from ragit.providers import OllamaProvider
 
 
 @dataclass
 class RAGConfig:
     """Configuration for a RAG pattern."""
+
     name: str
     chunk_size: int
     chunk_overlap: int
@@ -34,6 +35,7 @@ class RAGConfig:
 @dataclass
 class Document:
     """A document in the knowledge base."""
+
     id: str
     content: str
     metadata: dict = field(default_factory=dict)
@@ -42,15 +44,17 @@ class Document:
 @dataclass
 class Chunk:
     """A document chunk."""
+
     content: str
     doc_id: str
     chunk_index: int
-    embedding: Optional[list[float]] = None
+    embedding: list[float] | None = None
 
 
 @dataclass
 class BenchmarkQuestion:
     """A benchmark question for evaluation."""
+
     question: str
     ground_truth: str
     relevant_doc_ids: list[str] = field(default_factory=list)
@@ -59,6 +63,7 @@ class BenchmarkQuestion:
 @dataclass
 class EvaluationScores:
     """Scores from evaluating a RAG response."""
+
     answer_correctness: float
     context_relevance: float
     faithfulness: float
@@ -72,14 +77,14 @@ class EvaluationScores:
 class SimpleVectorStore:
     """Simple in-memory vector store."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.chunks: list[Chunk] = []
 
-    def add(self, chunks: list[Chunk]):
+    def add(self, chunks: list[Chunk]) -> None:
         """Add chunks to the store."""
         self.chunks.extend(chunks)
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all chunks."""
         self.chunks = []
 
@@ -132,7 +137,7 @@ class RagitExperiment:
         self,
         documents: list[Document],
         benchmark: list[BenchmarkQuestion],
-        provider: Optional[OllamaProvider] = None,
+        provider: OllamaProvider | None = None,
     ):
         self.documents = documents
         self.benchmark = benchmark
@@ -142,11 +147,11 @@ class RagitExperiment:
 
     def define_search_space(
         self,
-        chunk_sizes: list[int] = None,
-        chunk_overlaps: list[int] = None,
-        num_chunks_options: list[int] = None,
-        embedding_models: list[str] = None,
-        llm_models: list[str] = None,
+        chunk_sizes: list[int] | None = None,
+        chunk_overlaps: list[int] | None = None,
+        num_chunks_options: list[int] | None = None,
+        embedding_models: list[str] | None = None,
+        llm_models: list[str] | None = None,
     ) -> list[RAGConfig]:
         """
         Define the hyperparameter search space.
@@ -160,9 +165,9 @@ class RagitExperiment:
         num_chunks_options : list[int], optional
             Number of chunks to retrieve. Default: [2, 3, 5]
         embedding_models : list[str], optional
-            Embedding models to test. Default: ["nomic-embed-text"]
+            Embedding models to test. Default: from RAGIT_DEFAULT_EMBEDDING_MODEL env var
         llm_models : list[str], optional
-            LLM models to test. Default: ["qwen3-vl:235b-instruct-cloud"]
+            LLM models to test. Default: from RAGIT_DEFAULT_LLM_MODEL env var
 
         Returns
         -------
@@ -172,8 +177,8 @@ class RagitExperiment:
         chunk_sizes = chunk_sizes or [256, 512]
         chunk_overlaps = chunk_overlaps or [50, 100]
         num_chunks_options = num_chunks_options or [2, 3]
-        embedding_models = embedding_models or ["nomic-embed-text"]
-        llm_models = llm_models or ["qwen3-vl:235b-instruct-cloud"]
+        embedding_models = embedding_models or [config.DEFAULT_EMBEDDING_MODEL]
+        llm_models = llm_models or [config.DEFAULT_LLM_MODEL]
 
         configs = []
         pattern_num = 1
@@ -185,14 +190,16 @@ class RagitExperiment:
             if co >= cs:
                 continue
 
-            configs.append(RAGConfig(
-                name=f"Pattern_{pattern_num}",
-                chunk_size=cs,
-                chunk_overlap=co,
-                num_chunks=nc,
-                embedding_model=em,
-                llm_model=lm,
-            ))
+            configs.append(
+                RAGConfig(
+                    name=f"Pattern_{pattern_num}",
+                    chunk_size=cs,
+                    chunk_overlap=co,
+                    num_chunks=nc,
+                    embedding_model=em,
+                    llm_model=lm,
+                )
+            )
             pattern_num += 1
 
         return configs
@@ -209,11 +216,13 @@ class RagitExperiment:
             chunk_text = text[start:end].strip()
 
             if chunk_text:
-                chunks.append(Chunk(
-                    content=chunk_text,
-                    doc_id=doc.id,
-                    chunk_index=chunk_idx,
-                ))
+                chunks.append(
+                    Chunk(
+                        content=chunk_text,
+                        doc_id=doc.id,
+                        chunk_index=chunk_idx,
+                    )
+                )
                 chunk_idx += 1
 
             start = end - overlap
@@ -279,11 +288,11 @@ Answer:"""
             """Extract numeric score from LLM response."""
             try:
                 # Find first number in response
-                nums = ''.join(c for c in response if c.isdigit() or c == '.')
+                nums = "".join(c for c in response if c.isdigit() or c == ".")
                 if nums:
-                    score = float(nums.split('.')[0])  # Take integer part
+                    score = float(nums.split(".")[0])  # Take integer part
                     return min(100, max(0, score)) / 100
-            except:
+            except (ValueError, IndexError):
                 pass
             return 0.5
 
@@ -345,8 +354,7 @@ Respond with ONLY a number 0-100."""
         """
         if verbose:
             print(f"\nEvaluating {config.name}:")
-            print(f"  chunk_size={config.chunk_size}, overlap={config.chunk_overlap}, "
-                  f"num_chunks={config.num_chunks}")
+            print(f"  chunk_size={config.chunk_size}, overlap={config.chunk_overlap}, num_chunks={config.num_chunks}")
 
         start_time = time.time()
 
@@ -365,9 +373,7 @@ Respond with ONLY a number 0-100."""
             answer = self._generate(qa.question, context, config)
 
             # Evaluate
-            scores = self._evaluate_response(
-                qa.question, answer, qa.ground_truth, context, config
-            )
+            scores = self._evaluate_response(qa.question, answer, qa.ground_truth, context, config)
             all_scores.append(scores)
 
         # Aggregate scores
@@ -379,8 +385,10 @@ Respond with ONLY a number 0-100."""
         execution_time = time.time() - start_time
 
         if verbose:
-            print(f"  Scores: correctness={avg_correctness:.2f}, "
-                  f"relevance={avg_relevance:.2f}, faithfulness={avg_faithfulness:.2f}")
+            print(
+                f"  Scores: correctness={avg_correctness:.2f}, "
+                f"relevance={avg_relevance:.2f}, faithfulness={avg_faithfulness:.2f}"
+            )
             print(f"  Combined: {combined:.3f} | Time: {execution_time:.1f}s")
 
         return EvaluationResult(
@@ -400,13 +408,13 @@ Respond with ONLY a number 0-100."""
                 "faithfulness": {"mean": avg_faithfulness},
             },
             execution_time=execution_time,
-            final_score=combined,
+            final_score=float(combined),
         )
 
     def run(
         self,
-        configs: list[RAGConfig] = None,
-        max_configs: int = None,
+        configs: list[RAGConfig] | None = None,
+        max_configs: int | None = None,
         verbose: bool = True,
     ) -> list[EvaluationResult]:
         """
@@ -443,8 +451,8 @@ Respond with ONLY a number 0-100."""
 
         self.results = []
 
-        for config in tqdm(configs, desc="Evaluating configs", disable=not verbose):
-            result = self.evaluate_config(config, verbose=verbose)
+        for cfg in tqdm(configs, desc="Evaluating configs", disable=not verbose):
+            result = self.evaluate_config(cfg, verbose=verbose)
             self.results.append(result)
 
         # Sort by combined score (best first)
@@ -456,12 +464,14 @@ Respond with ONLY a number 0-100."""
             print("=" * 60)
             for i, result in enumerate(self.results[:5], 1):
                 print(f"{i}. {result.pattern_name}: {result.final_score:.3f}")
-                print(f"   chunk_size={result.indexing_params['chunk_size']}, "
-                      f"num_chunks={result.inference_params['num_chunks']}")
+                print(
+                    f"   chunk_size={result.indexing_params['chunk_size']}, "
+                    f"num_chunks={result.inference_params['num_chunks']}"
+                )
 
         return self.results
 
-    def get_best_config(self) -> Optional[EvaluationResult]:
+    def get_best_config(self) -> EvaluationResult | None:
         """Get the best configuration from results."""
         if not self.results:
             return None

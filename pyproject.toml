@@ -7,7 +7,7 @@ name = "ragit"
 description = "Automatic RAG Pattern Optimization Engine"
 authors = [{ name = "RODMENA LIMITED"}]
 maintainers = [
-    { name = "RODMENA LIMITED", email = "info@rodmena.com" },
+    { name = "RODMENA LIMITED", email = "info@rodmena.co.uk" },
 ]
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -16,6 +16,7 @@ classifiers = [
     "Natural Language :: English",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: MacOS :: MacOS X",
     "Operating System :: POSIX :: Linux",
 ]
@@ -34,6 +35,7 @@ dependencies = [
     "numpy>=1.26.0",
     "pandas>=2.2.0",
     "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
     "scikit-learn>=1.5.0",
     "tqdm>=4.66.0",
 ]
@@ -48,8 +50,8 @@ dev = [
     "ragit[test]",
     "pytest",
     "pytest-cov",
-    "black",
-    "pylint",
+    "ruff",
+    "mypy",
 ]
 
 test = ["pytest", "pytest-cov", "pytest-mock"]
@@ -66,11 +68,17 @@ python_files = ["tests/*.py"]
 log_cli = false
 log_level = "INFO"
 
-[tool.black]
+[tool.ruff]
 line-length = 120
+target-version = "py312"
 
-[tool.pylint]
-disable = ["missing-module-docstring", "too-few-public-methods"]
-max-line-length = 120
-max-args = 8
-max-attributes = 12
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true

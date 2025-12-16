@@ -1,81 +1,45 @@
-> [!IMPORTANT]
-> Work in progress ...
+# ragit
 
-<div align="center">
+Automatic RAG (Retrieval-Augmented Generation) hyperparameter optimization engine.
 
-# `ragit`
-### RAG Templates Optimization Engine
+## What it does
 
-![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white)
-[![GitHub](https://img.shields.io/github/license/rodmena-limited/ragit?style=for-the-badge)](https://github.com/rodmena-limited/ragit)
+ragit finds the best configuration for your RAG pipeline by testing different combinations of:
+- Chunk sizes and overlaps
+- Number of retrieved chunks
+- Embedding models
+- LLM models
 
-[![RAG Builder](https://img.shields.io/badge/RAG%20Builder-10B981?style=flat-square)](#)
-[![HPO](https://img.shields.io/badge/Hyperparameter%20Optimization-F59E0B?style=flat-square)](#)
-[![AutoML](https://img.shields.io/badge/AutoML%20for%20RAG-8B5CF6?style=flat-square)](#)
+You provide documents and benchmark questions, ragit evaluates different configurations and returns the best one.
 
-**Initialises RAG Template with optimal parameters**
-
-[Quick Start](#quick-start) • [Documentation](#how-to-use) • [Examples](#example) • [Contributing](#contribution)
-
-</div>
-
----
-
-## What is ragit?
-
-`ragit` is an **optimization engine for RAG Templates** that is LLM and Vector Database provider agnostic.
-It accepts variety of RAG Templates and search space definition. Returns initialised RAG Template with optimal parameters' values (called RAG Pattern).
-
-## Quick Start
+## Install
 
 ```bash
 pip install ragit
 ```
 
-## How to use
+## Usage
 
 ```python
-from ragit import RagitExperiment, Document, BenchmarkQuestion, OllamaProvider
+from ragit import RagitExperiment, Document, BenchmarkQuestion
 
-# Prepare your documents
 documents = [
-    Document(id="doc1", content="Python is a programming language created by Guido van Rossum."),
-    Document(id="doc2", content="Machine learning enables systems to learn from data."),
+    Document(id="doc1", content="Your document text here..."),
 ]
 
-# Define benchmark questions with expected answers
 benchmark = [
     BenchmarkQuestion(
-        question="Who created Python?",
-        ground_truth="Guido van Rossum created Python."
+        question="A question about your documents?",
+        ground_truth="The expected answer."
     ),
 ]
 
-# Run the optimization experiment
 experiment = RagitExperiment(documents, benchmark)
 results = experiment.run()
 
-# Get the best configuration
-best = results[0]
-print(f"Best config: {best.pattern_name}, Score: {best.final_score:.3f}")
+print(results[0])  # Best configuration
 ```
 
-## Example
+## License
 
-See the `examples/` directory for more detailed examples.
-
-
-## Contribution
-Pull requests are very welcome! Make sure your patches are well tested. Ideally create a topic branch for every separate change you make. For example:
-
-1. Fork the repo
-2. Create your feature branch (`git checkout -b my-new-feature`)
-3. Commit your changes (`git commit -am 'Added some feature'`)
-4. Push to the branch (`git push origin my-new-feature`)
-5. Create new Pull Request
-
-See more details in [contributing section](contributing.md).
-
----
-
-Copyright (c) 2025 RODMENA LIMITED
+Apache-2.0 - RODMENA LIMITED

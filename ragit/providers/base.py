@@ -11,21 +11,22 @@ making it easy to add new providers (Gemini, Claude, OpenAI, etc.)
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
 class LLMResponse:
     """Response from an LLM call."""
+
     text: str
     model: str
     provider: str
-    usage: Optional[dict] = None
+    usage: dict | None = None
 
 
 @dataclass
 class EmbeddingResponse:
     """Response from an embedding call."""
+
     embedding: list[float]
     model: str
     provider: str
@@ -50,9 +51,9 @@ class BaseLLMProvider(ABC):
         self,
         prompt: str,
         model: str,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """
         Generate text from the LLM.

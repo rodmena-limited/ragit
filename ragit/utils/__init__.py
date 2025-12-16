@@ -7,20 +7,19 @@ Ragit utilities module.
 """
 
 from collections import deque
-from collections.abc import Hashable
+from collections.abc import Hashable, Sequence
 from datetime import datetime
 from math import floor
-from typing import Sequence
 
 import pandas as pd
 
 
-def get_hashable_repr(dct: dict):
+def get_hashable_repr(dct: dict[str, object]) -> tuple[tuple[str, object, float, int | None], ...]:
     """
     Returns a hashable representation of the provided dictionary.
     """
-    queue = deque((k, v, 0, None) for k, v in dct.items())
-    dict_unpacked = []
+    queue: deque[tuple[str, object, float, int | None]] = deque((k, v, 0.0, None) for k, v in dct.items())
+    dict_unpacked: list[tuple[str, object, float, int | None]] = []
     while queue:
         key, val, lvl, p_ref = queue.pop()
         if hasattr(val, "items"):  # we have a nested dict

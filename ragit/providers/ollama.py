@@ -6,16 +6,17 @@
 Ollama provider for LLM and Embedding operations.
 
 This provider connects to a local or remote Ollama server.
+Configuration is loaded from environment variables.
 """
 
 import requests
-from typing import Optional
 
+from ragit.config import config
 from ragit.providers.base import (
-    BaseLLMProvider,
     BaseEmbeddingProvider,
-    LLMResponse,
+    BaseLLMProvider,
     EmbeddingResponse,
+    LLMResponse,
 )
 
 
@@ -25,10 +26,12 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
 
     Parameters
     ----------
-    base_url : str
-        Ollama server URL (default: http://localhost:11434)
-    timeout : int
-        Request timeout in seconds (default: 120)
+    base_url : str, optional
+        Ollama server URL (default: from OLLAMA_BASE_URL env var)
+    api_key : str, optional
+        API key for authentication (default: from OLLAMA_API_KEY env var)
+    timeout : int, optional
+        Request timeout in seconds (default: from OLLAMA_TIMEOUT env var)
 
     Examples
     --------
@@ -47,17 +50,32 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         "mxbai-embed-large": 1024,
         "all-minilm": 384,
         "snowflake-arctic-embed": 1024,
+        "qwen3-embedding": 4096,
+        "qwen3-embedding:0.6b": 1024,
+        "qwen3-embedding:4b": 2560,
+        "qwen3-embedding:8b": 4096,
     }
 
     def __init__(
         self,
-        base_url: str = "http://localhost:11434",
-        timeout: int = 120,
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self._current_embed_model: Optional[str] = None
+        base_url: str | None = None,
+        embedding_url: str | None = None,
+        api_key: str | None = None,
+        timeout: int | None = None,
+    ) -> None:
+        self.base_url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
+        self.embedding_url = (embedding_url or config.OLLAMA_EMBEDDING_URL).rstrip("/")
+        self.api_key = api_key or config.OLLAMA_API_KEY
+        self.timeout = timeout or config.OLLAMA_TIMEOUT
+        self._current_embed_model: str | None = None
         self._current_dimensions: int = 768  # default
+
+    def _get_headers(self, include_auth: bool = True) -> dict[str, str]:
+        """Get request headers including authentication if API key is set."""
+        headers = {"Content-Type": "application/json"}
+        if include_auth and self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     @property
     def provider_name(self) -> str:
@@ -70,17 +88,26 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
     def is_available(self) -> bool:
         """Check if Ollama server is reachable."""
         try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            response = requests.get(
+                f"{self.base_url}/api/tags",
+                headers=self._get_headers(),
+                timeout=5,
+            )
             return response.status_code == 200
         except requests.RequestException:
             return False
 
-    def list_models(self) -> list[dict]:
+    def list_models(self) -> list[dict[str, str]]:
         """List available models on the Ollama server."""
         try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=10)
+            response = requests.get(
+                f"{self.base_url}/api/tags",
+                headers=self._get_headers(),
+                timeout=10,
+            )
             response.raise_for_status()
-            return response.json().get("models", [])
+            data = response.json()
+            return list(data.get("models", []))
         except requests.RequestException as e:
             raise ConnectionError(f"Failed to list Ollama models: {e}") from e
 
@@ -88,29 +115,29 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         self,
         prompt: str,
         model: str,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Generate text using Ollama."""
-        payload = {
+        options: dict[str, float | int] = {"temperature": temperature}
+        if max_tokens:
+            options["num_predict"] = max_tokens
+
+        payload: dict[str, str | bool | dict[str, float | int]] = {
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "options": {
-                "temperature": temperature,
-            },
+            "options": options,
         }
 
         if system_prompt:
             payload["system"] = system_prompt
 
-        if max_tokens:
-            payload["options"]["num_predict"] = max_tokens
-
         try:
             response = requests.post(
                 f"{self.base_url}/api/generate",
+                headers=self._get_headers(),
                 json=payload,
                 timeout=self.timeout,
             )
@@ -131,13 +158,14 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             raise ConnectionError(f"Ollama generate failed: {e}") from e
 
     def embed(self, text: str, model: str) -> EmbeddingResponse:
-        """Generate embedding using Ollama."""
+        """Generate embedding using Ollama (uses embedding_url, no auth for local)."""
         self._current_embed_model = model
         self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
 
         try:
             response = requests.post(
-                f"{self.base_url}/api/embed",
+                f"{self.embedding_url}/api/embed",
+                headers=self._get_headers(include_auth=False),
                 json={"model": model, "input": text},
                 timeout=self.timeout,
             )
@@ -161,13 +189,14 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             raise ConnectionError(f"Ollama embed failed: {e}") from e
 
     def embed_batch(self, texts: list[str], model: str) -> list[EmbeddingResponse]:
-        """Generate embeddings for multiple texts."""
+        """Generate embeddings for multiple texts (uses embedding_url, no auth for local)."""
         self._current_embed_model = model
         self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
 
         try:
             response = requests.post(
-                f"{self.base_url}/api/embed",
+                f"{self.embedding_url}/api/embed",
+                headers=self._get_headers(include_auth=False),
                 json={"model": model, "input": texts},
                 timeout=self.timeout,
             )
@@ -192,10 +221,10 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
 
     def chat(
         self,
-        messages: list[dict],
+        messages: list[dict[str, str]],
         model: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """
         Chat completion using Ollama.
@@ -216,21 +245,21 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         LLMResponse
             The generated response.
         """
-        payload = {
+        options: dict[str, float | int] = {"temperature": temperature}
+        if max_tokens:
+            options["num_predict"] = max_tokens
+
+        payload: dict[str, str | bool | list[dict[str, str]] | dict[str, float | int]] = {
             "model": model,
             "messages": messages,
             "stream": False,
-            "options": {
-                "temperature": temperature,
-            },
+            "options": options,
         }
-
-        if max_tokens:
-            payload["options"]["num_predict"] = max_tokens
 
         try:
             response = requests.post(
                 f"{self.base_url}/api/chat",
+                headers=self._get_headers(),
                 json=payload,
                 timeout=self.timeout,
             )

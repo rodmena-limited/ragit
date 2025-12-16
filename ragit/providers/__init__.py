@@ -10,7 +10,7 @@ Supported providers:
 - Future: Gemini, Claude, OpenAI
 """
 
-from ragit.providers.base import BaseLLMProvider, BaseEmbeddingProvider
+from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
 from ragit.providers.ollama import OllamaProvider
 
 __all__ = [

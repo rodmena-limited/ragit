@@ -39,15 +39,15 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-# Public API
-from ragit.providers import OllamaProvider
-from ragit.core.experiment.experiment import (
-    RagitExperiment,
-    Document,
+# Public API (imports after logging setup)
+from ragit.core.experiment.experiment import (  # noqa: E402
     BenchmarkQuestion,
+    Document,
     RAGConfig,
+    RagitExperiment,
 )
-from ragit.core.experiment.results import EvaluationResult, ExperimentResults
+from ragit.core.experiment.results import EvaluationResult, ExperimentResults  # noqa: E402
+from ragit.providers import OllamaProvider  # noqa: E402
 
 __all__ = [
     "__version__",
