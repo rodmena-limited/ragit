@@ -62,3 +62,10 @@ test_table*
 .env
 CLAUDE.md
 GEMINI.md
+
+# Virtual environments
+.venv/
+venv/
+
+# Issue database
+.issue.db

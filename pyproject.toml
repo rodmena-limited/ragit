@@ -50,6 +50,7 @@ dev = [
     "ragit[test]",
     "pytest",
     "pytest-cov",
+    "issuedb[web]",
     "ruff",
     "mypy",
 ]
