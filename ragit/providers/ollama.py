@@ -56,6 +56,9 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         "qwen3-embedding:8b": 4096,
     }
 
+    # Max characters per embedding request (safe limit for 512 token models)
+    MAX_EMBED_CHARS = 1500
+
     def __init__(
         self,
         base_url: str | None = None,
@@ -162,6 +165,10 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         self._current_embed_model = model
         self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
 
+        # Truncate oversized inputs to prevent context length errors
+        if len(text) > self.MAX_EMBED_CHARS:
+            text = text[: self.MAX_EMBED_CHARS]
+
         try:
             response = requests.post(
                 f"{self.embedding_url}/api/embeddings",
@@ -199,6 +206,10 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         results = []
         try:
             for text in texts:
+                # Truncate oversized inputs to prevent context length errors
+                if len(text) > self.MAX_EMBED_CHARS:
+                    text = text[: self.MAX_EMBED_CHARS]
+
                 response = requests.post(
                     f"{self.embedding_url}/api/embeddings",
                     headers=self._get_headers(include_auth=False),
