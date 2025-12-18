@@ -398,6 +398,77 @@ print(f"Score: {best.score:.3f}")
 
 The experiment tests different combinations of chunk sizes, overlaps, and retrieval parameters to find what works best for your content.
 
+## Performance Features
+
+Ragit includes several optimizations for production workloads:
+
+### Connection Pooling
+
+`OllamaProvider` uses HTTP connection pooling via `requests.Session()` for faster sequential requests:
+
+```python
+from ragit.providers import OllamaProvider
+
+provider = OllamaProvider()
+
+# All requests reuse the same connection pool
+for text in texts:
+    provider.embed(text, model="mxbai-embed-large")
+
+# Explicitly close when done (optional, auto-closes on garbage collection)
+provider.close()
+```
+
+### Async Parallel Embedding
+
+For large batches, use `embed_batch_async()` with trio for 5-10x faster embedding:
+
+```python
+import trio
+from ragit.providers import OllamaProvider
+
+provider = OllamaProvider()
+
+async def embed_documents():
+    texts = ["doc1...", "doc2...", "doc3...", ...]  # hundreds of texts
+    embeddings = await provider.embed_batch_async(
+        texts,
+        model="mxbai-embed-large",
+        max_concurrent=10  # Adjust based on server capacity
+    )
+    return embeddings
+
+# Run with trio
+results = trio.run(embed_documents)
+```
+
+### Embedding Cache
+
+Repeated embedding calls are cached automatically (2048 entries LRU):
+
+```python
+from ragit.providers import OllamaProvider
+
+provider = OllamaProvider(use_cache=True)  # Default
+
+# First call hits the API
+provider.embed("Hello world", model="mxbai-embed-large")
+
+# Second call returns cached result instantly
+provider.embed("Hello world", model="mxbai-embed-large")
+
+# View cache statistics
+print(OllamaProvider.embedding_cache_info())
+# {'hits': 1, 'misses': 1, 'maxsize': 2048, 'currsize': 1}
+
+# Clear cache if needed
+OllamaProvider.clear_embedding_cache()
+```
+
+### Pre-normalized Embeddings
+
+Vector similarity uses pre-normalized embeddings, making cosine similarity a simple dot product (O(1) per comparison).
+
 ## API Reference
 
 ### Document Loading

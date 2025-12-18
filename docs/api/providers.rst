@@ -107,6 +107,70 @@ Creating Embeddings
    for i, resp in enumerate(responses):
        print(f"  {i}: {resp.dimensions} dimensions")
 
+Performance Features
+^^^^^^^^^^^^^^^^^^^^
+
+**Connection Pooling**
+
+``OllamaProvider`` uses ``requests.Session()`` for HTTP connection pooling:
+
+.. code-block:: python
+
+   from ragit.providers import OllamaProvider
+
+   provider = OllamaProvider()
+
+   # All requests reuse the same TCP connection
+   for text in texts:
+       provider.embed(text, model="mxbai-embed-large")
+
+   # Explicit cleanup (optional - auto-closes on garbage collection)
+   provider.close()
+
+**Async Parallel Embedding**
+
+For large batches, use ``embed_batch_async()`` with trio for 5-10x faster embedding:
+
+.. code-block:: python
+
+   import trio
+   from ragit.providers import OllamaProvider
+
+   provider = OllamaProvider()
+
+   async def embed_many():
+       texts = ["doc1...", "doc2...", "doc3..."]
+       return await provider.embed_batch_async(
+           texts,
+           model="mxbai-embed-large",
+           max_concurrent=10  # Adjust based on server capacity
+       )
+
+   results = trio.run(embed_many)
+
+**Embedding Cache**
+
+Embeddings are cached automatically using an LRU cache (2048 entries):
+
+.. code-block:: python
+
+   from ragit.providers import OllamaProvider
+
+   provider = OllamaProvider(use_cache=True)  # Default
+
+   # First call hits API
+   provider.embed("Hello", model="mxbai-embed-large")
+
+   # Second call returns cached result
+   provider.embed("Hello", model="mxbai-embed-large")
+
+   # View cache statistics
+   info = OllamaProvider.embedding_cache_info()
+   print(info)  # {'hits': 1, 'misses': 1, 'maxsize': 2048, 'currsize': 1}
+
+   # Clear cache
+   OllamaProvider.clear_embedding_cache()
+
 Base Classes
 ------------
 

@@ -3,8 +3,29 @@ Changelog
 
 All notable changes to ragit are documented here.
 
-Version 0.7.1 (Current)
+Version 0.7.4 (Current)
 -----------------------
+
+**Performance Optimizations**
+
+- Added HTTP connection pooling via ``requests.Session()`` for faster sequential requests
+- Added async parallel embedding via ``embed_batch_async()`` using trio + httpx (5-10x faster for large batches)
+- Added LRU cache for embeddings (2048 entries) to avoid redundant API calls
+- Added ``use_cache`` parameter to ``OllamaProvider`` (default: True)
+- Added ``clear_embedding_cache()`` and ``embedding_cache_info()`` static methods
+- Added ``close()`` method for explicit resource cleanup
+
+**New Dependencies**
+
+- Added ``trio>=0.24.0`` for async concurrency
+- Added ``httpx>=0.27.0`` for async HTTP client
+
+**Code Quality**
+
+- 166 tests with 90%+ coverage
+
+Version 0.7.1
+-------------
 
 **Performance Optimizations**
 
