@@ -290,7 +290,7 @@ class TestOllamaProviderEmbed:
         embedding = [0.1] * 1024
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"embedding": embedding, "model": "mxbai-embed-large"}
+        mock_resp.json.return_value = {"embeddings": [embedding], "model": "mxbai-embed-large"}
         mock_resp.raise_for_status.return_value = None
         mock_session.post.return_value = mock_resp
 
@@ -314,7 +314,7 @@ class TestOllamaProviderEmbed:
             embedding = [0.1] * 1024
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embedding": embedding}
+            mock_resp.json.return_value = {"embeddings": [embedding]}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
@@ -336,7 +336,7 @@ class TestOllamaProviderEmbed:
         embedding = [0.1] * 512  # Different dimension
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"embedding": embedding}
+        mock_resp.json.return_value = {"embeddings": [embedding]}
         mock_resp.raise_for_status.return_value = None
         mock_session.post.return_value = mock_resp
 
@@ -354,7 +354,7 @@ class TestOllamaProviderEmbed:
         mock_session = MagicMock()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"embedding": []}
+        mock_resp.json.return_value = {"embeddings": []}
         mock_resp.raise_for_status.return_value = None
         mock_session.post.return_value = mock_resp
 
@@ -381,23 +381,27 @@ class TestOllamaProviderEmbedBatch:
     """Tests for embed_batch method."""
 
     def test_embed_batch_success(self):
-        """Test successful batch embedding."""
+        """Test successful batch embedding with single API call."""
         provider = OllamaProvider(embedding_url="http://test:11434", use_cache=False)
 
         mock_session = MagicMock()
         embeddings = [[0.1] * 1024, [0.2] * 1024, [0.3] * 1024]
-        mock_responses = []
-        for emb in embeddings:
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embedding": emb, "model": "mxbai-embed-large"}
-            mock_resp.raise_for_status.return_value = None
-            mock_responses.append(mock_resp)
-        mock_session.post.side_effect = mock_responses
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"embeddings": embeddings, "model": "mxbai-embed-large"}
+        mock_resp.raise_for_status.return_value = None
+        mock_session.post.return_value = mock_resp
 
         provider._session = mock_session
 
         responses = provider.embed_batch(texts=["Hello", "World", "Test"], model="mxbai-embed-large")
+
+        # Should make a single API call
+        assert mock_session.post.call_count == 1
+
+        # Verify input format
+        call_args = mock_session.post.call_args
+        assert call_args[1]["json"]["input"] == ["Hello", "World", "Test"]
 
         assert len(responses) == 3
         assert responses[0].embedding == tuple(embeddings[0])
@@ -416,29 +420,28 @@ class TestOllamaProviderEmbedBatch:
         with pytest.raises(ConnectionError, match="Ollama batch embed failed"):
             provider.embed_batch(texts=["a", "b"], model="model")
 
-    def test_embed_batch_with_cache(self):
-        """Test embed_batch uses cache when enabled."""
-        OllamaProvider.clear_embedding_cache()
+    def test_embed_batch_single_api_call(self):
+        """Test embed_batch uses native batch API (single call)."""
+        provider = OllamaProvider(embedding_url="http://test:11434", use_cache=False)
 
-        with patch("ragit.providers.ollama.requests.post") as mock_post:
-            embedding = [0.1] * 768
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embedding": embedding}
-            mock_resp.raise_for_status.return_value = None
-            mock_post.return_value = mock_resp
+        mock_session = MagicMock()
+        embeddings = [[0.1] * 768, [0.2] * 768]
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"embeddings": embeddings}
+        mock_resp.raise_for_status.return_value = None
+        mock_session.post.return_value = mock_resp
 
-            provider = OllamaProvider(use_cache=True)
+        provider._session = mock_session
 
-            # First batch call
-            responses = provider.embed_batch(texts=["text_a", "text_b"], model="model")
-            assert mock_post.call_count == 2
-            assert len(responses) == 2
+        # Batch call makes single API request
+        responses = provider.embed_batch(texts=["text_a", "text_b"], model="model")
+        assert mock_session.post.call_count == 1
+        assert len(responses) == 2
 
-            # Second batch call with same texts - should use cache
-            responses2 = provider.embed_batch(texts=["text_a", "text_b"], model="model")
-            assert mock_post.call_count == 2  # No additional calls
-            assert len(responses2) == 2
+        # Verify all texts sent in single request
+        call_args = mock_session.post.call_args
+        assert call_args[1]["json"]["input"] == ["text_a", "text_b"]
 
     def test_embed_batch_truncates_long_text(self):
         """Test embed_batch truncates oversized text."""
@@ -447,7 +450,7 @@ class TestOllamaProviderEmbedBatch:
         mock_session = MagicMock()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"embedding": [0.1] * 768}
+        mock_resp.json.return_value = {"embeddings": [[0.1] * 768]}
         mock_resp.raise_for_status.return_value = None
         mock_session.post.return_value = mock_resp
 
@@ -457,10 +460,10 @@ class TestOllamaProviderEmbedBatch:
         long_text = "x" * 5000
         provider.embed_batch(texts=[long_text], model="model")
 
-        # Verify the prompt was truncated
+        # Verify the input was truncated
         call_args = mock_session.post.call_args
-        sent_prompt = call_args[1]["json"]["prompt"]
-        assert len(sent_prompt) == OllamaProvider.MAX_EMBED_CHARS
+        sent_input = call_args[1]["json"]["input"]
+        assert len(sent_input[0]) == OllamaProvider.MAX_EMBED_CHARS
 
 
 class TestOllamaProviderEmbedBatchAsync:
@@ -577,7 +580,7 @@ class TestOllamaProviderCache:
             embedding = [0.1] * 768
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embedding": embedding}
+            mock_resp.json.return_value = {"embeddings": [embedding]}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
@@ -601,7 +604,7 @@ class TestOllamaProviderCache:
             embedding = [0.1] * 768
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embedding": embedding}
+            mock_resp.json.return_value = {"embeddings": [embedding]}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 
@@ -611,10 +614,10 @@ class TestOllamaProviderCache:
             long_text = "x" * 5000
             provider.embed(long_text, "model")
 
-            # Verify the prompt was truncated
+            # Verify the input was truncated
             call_args = mock_post.call_args
-            sent_prompt = call_args[1]["json"]["prompt"]
-            assert len(sent_prompt) == OllamaProvider.MAX_EMBED_CHARS
+            sent_input = call_args[1]["json"]["input"]
+            assert len(sent_input) == OllamaProvider.MAX_EMBED_CHARS
 
     def test_cached_embedding_empty_response_error(self):
         """Test that _cached_embedding raises on empty embedding."""
@@ -623,7 +626,7 @@ class TestOllamaProviderCache:
         with patch("ragit.providers.ollama.requests.post") as mock_post:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
-            mock_resp.json.return_value = {"embedding": []}
+            mock_resp.json.return_value = {"embeddings": []}
             mock_resp.raise_for_status.return_value = None
             mock_post.return_value = mock_resp
 

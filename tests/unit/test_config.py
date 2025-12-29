@@ -52,7 +52,7 @@ class TestConfig:
                 assert cfg.OLLAMA_TIMEOUT == 120
                 assert cfg.LOG_LEVEL == "INFO"
                 assert cfg.DEFAULT_LLM_MODEL == "qwen3-vl:235b-instruct"
-                assert cfg.DEFAULT_EMBEDDING_MODEL == "mxbai-embed-large"
+                assert cfg.DEFAULT_EMBEDDING_MODEL == "nomic-embed-text:latest"
 
     def test_config_from_env_vars(self):
         """Test that Config loads values from environment variables."""

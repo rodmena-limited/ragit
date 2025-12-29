@@ -19,7 +19,6 @@ from typing import Any
 
 import httpx
 import requests
-import trio
 
 from ragit.config import config
 from ragit.providers.base import (
@@ -39,17 +38,17 @@ def _cached_embedding(text: str, model: str, embedding_url: str, timeout: int) -
         text = text[: OllamaProvider.MAX_EMBED_CHARS]
 
     response = requests.post(
-        f"{embedding_url}/api/embeddings",
+        f"{embedding_url}/api/embed",
         headers={"Content-Type": "application/json"},
-        json={"model": model, "prompt": text},
+        json={"model": model, "input": text},
         timeout=timeout,
     )
     response.raise_for_status()
     data = response.json()
-    embedding = data.get("embedding", [])
-    if not embedding:
+    embeddings = data.get("embeddings", [])
+    if not embeddings or not embeddings[0]:
         raise ValueError("Empty embedding returned from Ollama")
-    return tuple(embedding)
+    return tuple(embeddings[0])
 
 
 class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
@@ -58,7 +57,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
 
     Performance features:
     - Connection pooling via requests.Session() for faster sequential requests
-    - Async parallel embedding via embed_batch_async() using trio + httpx
+    - Native batch embedding via /api/embed endpoint (single API call)
     - LRU cache for repeated embedding queries (2048 entries)
 
     Parameters
@@ -78,8 +77,8 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
     >>> response = provider.generate("What is RAG?", model="llama3")
     >>> print(response.text)
 
-    >>> # Async batch embedding (5-10x faster for large batches)
-    >>> embeddings = trio.run(provider.embed_batch_async, texts, "mxbai-embed-large")
+    >>> # Batch embedding (single API call)
+    >>> embeddings = provider.embed_batch(texts, "mxbai-embed-large")
     """
 
     # Known embedding model dimensions
@@ -234,16 +233,16 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
                 # Direct call without cache
                 truncated = text[: self.MAX_EMBED_CHARS] if len(text) > self.MAX_EMBED_CHARS else text
                 response = self.session.post(
-                    f"{self.embedding_url}/api/embeddings",
-                    json={"model": model, "prompt": truncated},
+                    f"{self.embedding_url}/api/embed",
+                    json={"model": model, "input": truncated},
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
                 data = response.json()
-                embedding_list = data.get("embedding", [])
-                if not embedding_list:
+                embeddings = data.get("embeddings", [])
+                if not embeddings or not embeddings[0]:
                     raise ValueError("Empty embedding returned from Ollama")
-                embedding = tuple(embedding_list)
+                embedding = tuple(embeddings[0])
 
             # Update dimensions from actual response
             self._current_dimensions = len(embedding)
@@ -258,34 +257,32 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             raise ConnectionError(f"Ollama embed failed: {e}") from e
 
     def embed_batch(self, texts: list[str], model: str) -> list[EmbeddingResponse]:
-        """Generate embeddings for multiple texts sequentially.
+        """Generate embeddings for multiple texts in a single API call.
 
-        For better performance with large batches, use embed_batch_async().
-
-        Note: Ollama /api/embeddings only supports single prompts, so we loop.
+        The /api/embed endpoint supports batch inputs natively.
         """
         self._current_embed_model = model
         self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
 
-        results = []
+        # Truncate oversized inputs
+        truncated_texts = [text[: self.MAX_EMBED_CHARS] if len(text) > self.MAX_EMBED_CHARS else text for text in texts]
+
         try:
-            for text in texts:
-                # Truncate oversized inputs
-                truncated = text[: self.MAX_EMBED_CHARS] if len(text) > self.MAX_EMBED_CHARS else text
+            response = self.session.post(
+                f"{self.embedding_url}/api/embed",
+                json={"model": model, "input": truncated_texts},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+            embeddings_list = data.get("embeddings", [])
 
-                if self.use_cache:
-                    embedding = _cached_embedding(truncated, model, self.embedding_url, self.timeout)
-                else:
-                    response = self.session.post(
-                        f"{self.embedding_url}/api/embeddings",
-                        json={"model": model, "prompt": truncated},
-                        timeout=self.timeout,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    embedding_list = data.get("embedding", [])
-                    embedding = tuple(embedding_list) if embedding_list else ()
+            if not embeddings_list:
+                raise ValueError("Empty embeddings returned from Ollama")
 
+            results = []
+            for embedding_data in embeddings_list:
+                embedding = tuple(embedding_data) if embedding_data else ()
                 if embedding:
                     self._current_dimensions = len(embedding)
 
@@ -305,12 +302,12 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         self,
         texts: list[str],
         model: str,
-        max_concurrent: int = 10,
+        max_concurrent: int = 10,  # kept for API compatibility, no longer used
     ) -> list[EmbeddingResponse]:
-        """Generate embeddings for multiple texts in parallel using trio.
+        """Generate embeddings for multiple texts asynchronously.
 
-        This method is 5-10x faster than embed_batch() for large batches
-        by making concurrent HTTP requests.
+        The /api/embed endpoint supports batch inputs natively, so this
+        makes a single async HTTP request for all texts.
 
         Parameters
         ----------
@@ -319,8 +316,8 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         model : str
             Embedding model name.
         max_concurrent : int
-            Maximum concurrent requests (default: 10).
-            Higher values = faster but more server load.
+            Deprecated, kept for API compatibility. No longer used since
+            the API now supports native batching.
 
         Returns
         -------
@@ -335,52 +332,40 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         self._current_embed_model = model
         self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
 
-        # Results storage (index -> embedding)
-        results: dict[int, EmbeddingResponse] = {}
-        errors: list[Exception] = []
+        # Truncate oversized inputs
+        truncated_texts = [text[: self.MAX_EMBED_CHARS] if len(text) > self.MAX_EMBED_CHARS else text for text in texts]
 
-        # Semaphore to limit concurrency
-        limiter = trio.CapacityLimiter(max_concurrent)
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.embedding_url}/api/embed",
+                    json={"model": model, "input": truncated_texts},
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
 
-        async def fetch_embedding(client: httpx.AsyncClient, index: int, text: str) -> None:
-            """Fetch a single embedding."""
-            async with limiter:
-                try:
-                    # Truncate oversized inputs
-                    truncated = text[: self.MAX_EMBED_CHARS] if len(text) > self.MAX_EMBED_CHARS else text
+            embeddings_list = data.get("embeddings", [])
+            if not embeddings_list:
+                raise ValueError("Empty embeddings returned from Ollama")
 
-                    response = await client.post(
-                        f"{self.embedding_url}/api/embeddings",
-                        json={"model": model, "prompt": truncated},
-                        timeout=self.timeout,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
+            results = []
+            for embedding_data in embeddings_list:
+                embedding = tuple(embedding_data) if embedding_data else ()
+                if embedding:
+                    self._current_dimensions = len(embedding)
 
-                    embedding_list = data.get("embedding", [])
-                    embedding = tuple(embedding_list) if embedding_list else ()
-
-                    if embedding:
-                        self._current_dimensions = len(embedding)
-
-                    results[index] = EmbeddingResponse(
+                results.append(
+                    EmbeddingResponse(
                         embedding=embedding,
                         model=model,
                         provider=self.provider_name,
                         dimensions=len(embedding),
                     )
-                except Exception as e:
-                    errors.append(e)
-
-        async with httpx.AsyncClient() as client, trio.open_nursery() as nursery:
-            for i, text in enumerate(texts):
-                nursery.start_soon(fetch_embedding, client, i, text)
-
-        if errors:
-            raise ConnectionError(f"Ollama async batch embed failed: {errors[0]}") from errors[0]
-
-        # Return results in original order
-        return [results[i] for i in range(len(texts))]
+                )
+            return results
+        except httpx.HTTPError as e:
+            raise ConnectionError(f"Ollama async batch embed failed: {e}") from e
 
     def chat(
         self,

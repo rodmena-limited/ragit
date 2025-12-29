@@ -41,7 +41,7 @@ class Config:
 
     # Default Models
     DEFAULT_LLM_MODEL: str = os.getenv("RAGIT_DEFAULT_LLM_MODEL", "qwen3-vl:235b-instruct")
-    DEFAULT_EMBEDDING_MODEL: str = os.getenv("RAGIT_DEFAULT_EMBEDDING_MODEL", "mxbai-embed-large")
+    DEFAULT_EMBEDDING_MODEL: str = os.getenv("RAGIT_DEFAULT_EMBEDDING_MODEL", "nomic-embed-text:latest")
 
     # Logging
     LOG_LEVEL: str = os.getenv("RAGIT_LOG_LEVEL", "INFO")
