@@ -78,11 +78,11 @@ class TestSentenceTransformersProviderKnownDimensions:
         assert provider.dimensions == 768
 
 
-@pytest.mark.integration
 class TestSentenceTransformersProviderEmbed:
-    """Integration tests for SentenceTransformersProvider embedding.
+    """Tests for SentenceTransformersProvider embedding.
 
     These tests actually load models and generate embeddings.
+    They run offline - no external services required.
     """
 
     @pytest.fixture
@@ -150,9 +150,8 @@ class TestSentenceTransformersProviderEmbed:
         assert provider.is_available() is True
 
 
-@pytest.mark.integration
 class TestSentenceTransformersProviderModelCache:
-    """Tests for model caching."""
+    """Tests for model caching (offline - no external services)."""
 
     def test_model_cached(self):
         """Test that models are cached across instances."""

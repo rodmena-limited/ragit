@@ -158,7 +158,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
                 f"{self.base_url}/api/tags",
                 timeout=5,
             )
-            return response.status_code == 200
+            return bool(response.status_code == 200)
         except requests.RequestException:
             return False
 

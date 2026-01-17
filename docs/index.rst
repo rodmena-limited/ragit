@@ -1,7 +1,7 @@
 ragit Documentation
 ===================
 
-Welcome to the official documentation for **ragit**, a RAG (Retrieval-Augmented Generation) optimization library that helps you build and optimize RAG pipelines with ease.
+**ragit** is a RAG (Retrieval-Augmented Generation) toolkit for Python. Build and optimize RAG pipelines with any embedding or LLM provider.
 
 .. toctree::
    :maxdepth: 2
@@ -36,43 +36,37 @@ Welcome to the official documentation for **ragit**, a RAG (Retrieval-Augmented 
    changelog
 
 
-About ragit
------------
-
-ragit provides automatic RAG hyperparameter optimization, a high-level RAG assistant for document Q&A, and pluggable provider architecture. It's designed to help you find the optimal configuration for your RAG pipelines without manual tuning.
-
 Key Features
-^^^^^^^^^^^^
+------------
 
-- **RAG Hyperparameter Optimization**: Automatically find the best chunk size, overlap, and retrieval parameters
-- **High-Level RAG Assistant**: Simple API for document Q&A with ``RAGAssistant``
-- **Pluggable Providers**: Support for Ollama (local and cloud) with extensible architecture
+- **Provider Agnostic**: Use any embedding API (OpenAI, Cohere, HuggingFace) or offline with SentenceTransformers
+- **RAG Hyperparameter Optimization**: Find optimal chunk size, overlap, and retrieval parameters
+- **High-Level API**: Simple ``RAGAssistant`` for document Q&A
 - **Document Loading**: Built-in utilities for loading and chunking documents
-- **Performance Optimized**: Pre-normalized embeddings, batch API calls, vectorized operations
 
 Quick Example
-^^^^^^^^^^^^^
+-------------
 
 .. code-block:: python
 
    from ragit import RAGAssistant
 
-   # Create assistant with your documents
-   assistant = RAGAssistant("docs/")
+   def my_embed(text: str) -> list[float]:
+       # Use any embedding API
+       return your_embedding_api(text)
 
-   # Ask questions
-   answer = assistant.ask("How do I create a new user?")
-   print(answer)
+   assistant = RAGAssistant("docs/", embed_fn=my_embed)
+   results = assistant.retrieve("How do I create a new user?")
 
+Or with offline embedding:
 
-Why ragit?
-^^^^^^^^^^
+.. code-block:: python
 
-RAG systems are powerful but sensitive to hyperparameters. The wrong chunk size or retrieval count can dramatically reduce answer quality. ragit solves this by:
+   from ragit import RAGAssistant
+   from ragit.providers import SentenceTransformersProvider
 
-1. **Automated Optimization**: Grid search over hyperparameter combinations
-2. **Evaluation Metrics**: Built-in scoring for answer correctness, context relevance, and faithfulness
-3. **Simple Integration**: Works with Flask, FastAPI, CLI tools, and more
+   assistant = RAGAssistant("docs/", provider=SentenceTransformersProvider())
+   results = assistant.retrieve("How do I create a new user?")
 
 
 Indices and tables
