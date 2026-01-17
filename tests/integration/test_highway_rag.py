@@ -160,13 +160,13 @@ class HighwayDSLAssistant:
     def _embed(self, text: str) -> list[float]:
         """Generate embedding for text."""
         resp = requests.post(
-            f"{self.embedding_url}/api/embed",
+            f"{self.embedding_url}/api/embeddings",
             headers=self._get_headers(include_auth=False),  # Local embeddings, no auth
-            json={"model": self.embedding_model, "input": text},
+            json={"model": self.embedding_model, "prompt": text},
             timeout=60,
         )
         resp.raise_for_status()
-        return resp.json()["embeddings"][0]
+        return resp.json()["embedding"]
 
     def _generate(self, prompt: str, system: str) -> str:
         """Generate text using LLM."""
@@ -240,8 +240,8 @@ def ollama_config():
         "llm_url": config.OLLAMA_BASE_URL,
         "embedding_url": config.OLLAMA_EMBEDDING_URL,
         "api_key": config.OLLAMA_API_KEY,
-        "llm_model": config.DEFAULT_LLM_MODEL,
-        "embedding_model": config.DEFAULT_EMBEDDING_MODEL,
+        "llm_model": config.DEFAULT_LLM_MODEL or "qwen3-coder:480b-cloud",
+        "embedding_model": config.DEFAULT_EMBEDDING_MODEL or "nomic-embed-text:latest",
     }
 
 
@@ -280,6 +280,7 @@ def assistant(ollama_config, check_ollama):
     return assistant
 
 
+@pytest.mark.integration
 class TestHighwayRAGAssistant:
     """Integration tests for Highway DSL RAG Assistant."""
 
@@ -354,6 +355,7 @@ class TestHighwayRAGAssistant:
         assert sim == pytest.approx(-1.0, rel=0.001)
 
 
+@pytest.mark.integration
 class TestRAGQuality:
     """Tests for RAG quality metrics."""
 

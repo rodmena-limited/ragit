@@ -10,16 +10,17 @@ Provides a simple interface for RAG-based tasks.
 Note: This class is NOT thread-safe. Do not share instances across threads.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ragit.config import config
 from ragit.core.experiment.experiment import Chunk, Document
 from ragit.loaders import chunk_document, chunk_rst_sections, load_directory, load_text
-from ragit.providers import OllamaProvider
+from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
+from ragit.providers.function_adapter import FunctionProvider
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -38,16 +39,28 @@ class RAGAssistant:
         - List of Document objects
         - Path to a single file
         - Path to a directory (will load all .txt, .md, .rst files)
-    provider : OllamaProvider, optional
-        LLM/embedding provider. Defaults to OllamaProvider().
+    embed_fn : Callable[[str], list[float]], optional
+        Function that takes text and returns an embedding vector.
+        If provided, creates a FunctionProvider internally.
+    generate_fn : Callable, optional
+        Function for text generation. Supports (prompt) or (prompt, system_prompt).
+        If provided without embed_fn, must also provide embed_fn.
+    provider : BaseEmbeddingProvider, optional
+        Provider for embeddings (and optionally LLM). If embed_fn is provided,
+        this is ignored for embeddings.
     embedding_model : str, optional
-        Embedding model name. Defaults to config.DEFAULT_EMBEDDING_MODEL.
+        Embedding model name (used with provider).
     llm_model : str, optional
-        LLM model name. Defaults to config.DEFAULT_LLM_MODEL.
+        LLM model name (used with provider).
     chunk_size : int, optional
         Chunk size for splitting documents (default: 512).
     chunk_overlap : int, optional
         Overlap between chunks (default: 50).
+
+    Raises
+    ------
+    ValueError
+        If neither embed_fn nor provider is provided.
 
     Note
     ----
@@ -55,31 +68,71 @@ class RAGAssistant:
 
     Examples
     --------
-    >>> # From documents
-    >>> assistant = RAGAssistant([Document(id="doc1", content="...")])
+    >>> # With custom embedding function (retrieval-only)
+    >>> assistant = RAGAssistant(docs, embed_fn=my_embed)
+    >>> results = assistant.retrieve("query")
+    >>>
+    >>> # With custom embedding and LLM functions (full RAG)
+    >>> assistant = RAGAssistant(docs, embed_fn=my_embed, generate_fn=my_llm)
     >>> answer = assistant.ask("What is X?")
-
-    >>> # From file
-    >>> assistant = RAGAssistant("docs/tutorial.rst")
-    >>> answer = assistant.ask("How do I do Y?")
-
-    >>> # From directory
-    >>> assistant = RAGAssistant("docs/")
-    >>> answer = assistant.ask("Explain Z")
+    >>>
+    >>> # With explicit provider
+    >>> from ragit.providers import OllamaProvider
+    >>> assistant = RAGAssistant(docs, provider=OllamaProvider())
+    >>>
+    >>> # With SentenceTransformers (offline)
+    >>> from ragit.providers import SentenceTransformersProvider
+    >>> assistant = RAGAssistant(docs, provider=SentenceTransformersProvider())
     """
 
     def __init__(
         self,
         documents: list[Document] | str | Path,
-        provider: OllamaProvider | None = None,
+        embed_fn: Callable[[str], list[float]] | None = None,
+        generate_fn: Callable[..., str] | None = None,
+        provider: BaseEmbeddingProvider | BaseLLMProvider | None = None,
         embedding_model: str | None = None,
         llm_model: str | None = None,
         chunk_size: int = 512,
         chunk_overlap: int = 50,
     ):
-        self.provider = provider or OllamaProvider()
-        self.embedding_model = embedding_model or config.DEFAULT_EMBEDDING_MODEL
-        self.llm_model = llm_model or config.DEFAULT_LLM_MODEL
+        # Resolve provider from embed_fn/generate_fn or explicit provider
+        self._embedding_provider: BaseEmbeddingProvider
+        self._llm_provider: BaseLLMProvider | None = None
+
+        if embed_fn is not None:
+            # Create FunctionProvider from provided functions
+            function_provider = FunctionProvider(
+                embed_fn=embed_fn,
+                generate_fn=generate_fn,
+            )
+            self._embedding_provider = function_provider
+            if generate_fn is not None:
+                self._llm_provider = function_provider
+            elif provider is not None and isinstance(provider, BaseLLMProvider):
+                # Use explicit provider for LLM if function_provider doesn't have LLM
+                self._llm_provider = provider
+        elif provider is not None:
+            # Use explicit provider
+            if not isinstance(provider, BaseEmbeddingProvider):
+                raise ValueError(
+                    "Provider must implement BaseEmbeddingProvider for embeddings. "
+                    "Alternatively, provide embed_fn."
+                )
+            self._embedding_provider = provider
+            if isinstance(provider, BaseLLMProvider):
+                self._llm_provider = provider
+        else:
+            raise ValueError(
+                "Must provide embed_fn or provider for embeddings. "
+                "Examples:\n"
+                "  RAGAssistant(docs, embed_fn=my_embed_function)\n"
+                "  RAGAssistant(docs, provider=OllamaProvider())\n"
+                "  RAGAssistant(docs, provider=SentenceTransformersProvider())"
+            )
+
+        self.embedding_model = embedding_model or "default"
+        self.llm_model = llm_model or "default"
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
@@ -128,7 +181,7 @@ class RAGAssistant:
 
         # Batch embed all chunks at once (single API call)
         texts = [chunk.content for chunk in all_chunks]
-        responses = self.provider.embed_batch(texts, self.embedding_model)
+        responses = self._embedding_provider.embed_batch(texts, self.embedding_model)
 
         # Build embedding matrix directly (skip storing in chunks to avoid duplication)
         embedding_matrix = np.array([response.embedding for response in responses], dtype=np.float64)
@@ -169,7 +222,7 @@ class RAGAssistant:
             return []
 
         # Get query embedding and normalize
-        query_response = self.provider.embed(query, self.embedding_model)
+        query_response = self._embedding_provider.embed(query, self.embedding_model)
         query_vec = np.array(query_response.embedding, dtype=np.float64)
         query_norm = np.linalg.norm(query_vec)
         if query_norm == 0:
@@ -209,6 +262,15 @@ class RAGAssistant:
         results = self.retrieve(query, top_k)
         return "\n\n---\n\n".join(chunk.content for chunk, _ in results)
 
+    def _ensure_llm(self) -> BaseLLMProvider:
+        """Ensure LLM provider is available."""
+        if self._llm_provider is None:
+            raise NotImplementedError(
+                "No LLM configured. Provide generate_fn or a provider with LLM support "
+                "to use ask(), generate(), or generate_code() methods."
+            )
+        return self._llm_provider
+
     def generate(
         self,
         prompt: str,
@@ -231,8 +293,14 @@ class RAGAssistant:
         -------
         str
             Generated text.
+
+        Raises
+        ------
+        NotImplementedError
+            If no LLM is configured.
         """
-        response = self.provider.generate(
+        llm = self._ensure_llm()
+        response = llm.generate(
             prompt=prompt,
             model=self.llm_model,
             system_prompt=system_prompt,
@@ -265,6 +333,11 @@ class RAGAssistant:
         -------
         str
             Generated answer.
+
+        Raises
+        ------
+        NotImplementedError
+            If no LLM is configured.
 
         Examples
         --------
@@ -315,6 +388,11 @@ Answer:"""
         str
             Generated code (cleaned, without markdown).
 
+        Raises
+        ------
+        NotImplementedError
+            If no LLM is configured.
+
         Examples
         --------
         >>> code = assistant.generate_code("create a REST API with user endpoints")
@@ -357,3 +435,8 @@ Generate the {language} code:"""
     def num_documents(self) -> int:
         """Return number of loaded documents."""
         return len(self.documents)
+
+    @property
+    def has_llm(self) -> bool:
+        """Check if LLM is configured."""
+        return self._llm_provider is not None

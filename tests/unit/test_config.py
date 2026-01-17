@@ -51,8 +51,9 @@ class TestConfig:
                 assert cfg.OLLAMA_API_KEY is None
                 assert cfg.OLLAMA_TIMEOUT == 120
                 assert cfg.LOG_LEVEL == "INFO"
-                assert cfg.DEFAULT_LLM_MODEL == "qwen3-vl:235b-instruct"
-                assert cfg.DEFAULT_EMBEDDING_MODEL == "nomic-embed-text:latest"
+                # As of v0.8.0, these are None by default (no implicit Ollama)
+                assert cfg.DEFAULT_LLM_MODEL is None
+                assert cfg.DEFAULT_EMBEDDING_MODEL is None
 
     def test_config_from_env_vars(self):
         """Test that Config loads values from environment variables."""

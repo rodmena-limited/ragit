@@ -9,14 +9,21 @@ Quick Start
 -----------
 >>> from ragit import RAGAssistant
 >>>
->>> # Load docs and ask questions
->>> assistant = RAGAssistant("docs/")
->>> answer = assistant.ask("How do I create a REST API?")
->>> print(answer)
+>>> # With custom embedding function (retrieval-only)
+>>> def my_embed(text: str) -> list[float]:
+...     # Your embedding implementation
+...     pass
+>>> assistant = RAGAssistant("docs/", embed_fn=my_embed)
+>>> results = assistant.retrieve("How do I create a REST API?")
 >>>
->>> # Generate code
->>> code = assistant.generate_code("create a user authentication API")
->>> print(code)
+>>> # With SentenceTransformers (offline, requires ragit[transformers])
+>>> from ragit.providers import SentenceTransformersProvider
+>>> assistant = RAGAssistant("docs/", provider=SentenceTransformersProvider())
+>>>
+>>> # With Ollama (explicit)
+>>> from ragit.providers import OllamaProvider
+>>> assistant = RAGAssistant("docs/", provider=OllamaProvider())
+>>> answer = assistant.ask("How do I create a REST API?")
 
 Optimization
 ------------
@@ -25,7 +32,8 @@ Optimization
 >>> docs = [Document(id="doc1", content="...")]
 >>> benchmark = [BenchmarkQuestion(question="What is X?", ground_truth="...")]
 >>>
->>> experiment = RagitExperiment(docs, benchmark)
+>>> # With explicit provider
+>>> experiment = RagitExperiment(docs, benchmark, provider=OllamaProvider())
 >>> results = experiment.run()
 >>> print(results[0])  # Best configuration
 """
@@ -63,7 +71,12 @@ from ragit.loaders import (  # noqa: E402
     load_directory,
     load_text,
 )
-from ragit.providers import OllamaProvider  # noqa: E402
+from ragit.providers import (  # noqa: E402
+    BaseEmbeddingProvider,
+    BaseLLMProvider,
+    FunctionProvider,
+    OllamaProvider,
+)
 
 __all__ = [
     "__version__",
@@ -79,7 +92,11 @@ __all__ = [
     # Core classes
     "Document",
     "Chunk",
+    # Providers
     "OllamaProvider",
+    "FunctionProvider",
+    "BaseLLMProvider",
+    "BaseEmbeddingProvider",
     # Optimization
     "RagitExperiment",
     "BenchmarkQuestion",
@@ -87,3 +104,13 @@ __all__ = [
     "EvaluationResult",
     "ExperimentResults",
 ]
+
+# Conditionally add SentenceTransformersProvider if available
+try:
+    from ragit.providers import (  # noqa: E402
+        SentenceTransformersProvider as SentenceTransformersProvider,
+    )
+
+    __all__ += ["SentenceTransformersProvider"]
+except ImportError:
+    pass

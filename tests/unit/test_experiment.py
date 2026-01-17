@@ -205,56 +205,42 @@ class TestSimpleVectorStore:
         assert results[0][0].content == "with_emb"
 
 
+def make_mock_embed_fn():
+    """Create a mock embed function."""
+
+    def embed_fn(text: str) -> list[float]:
+        hash_val = hash(text) % 1000
+        np.random.seed(hash_val)
+        emb = np.random.randn(1024)
+        emb = emb / np.linalg.norm(emb)
+        return emb.tolist()
+
+    return embed_fn
+
+
+def make_mock_generate_fn(score_response: str = "85"):
+    """Create a mock generate function."""
+
+    def generate_fn(prompt: str, system_prompt: str | None = None) -> str:
+        if "Rate" in prompt or "correct" in prompt.lower():
+            return score_response
+        return "Generated answer based on context."
+
+    return generate_fn
+
+
 class TestRagitExperiment:
     """Tests for RagitExperiment class."""
 
     @pytest.fixture
-    def mock_provider(self):
-        """Create a mock provider."""
-        provider = MagicMock()
-        provider.provider_name = "mock"
+    def mock_embed_fn(self):
+        """Create a mock embed function."""
+        return make_mock_embed_fn()
 
-        # Mock embed to return consistent embeddings
-        def mock_embed(text, model):
-            # Simple hash-based embedding for determinism
-            hash_val = hash(text) % 1000
-            np.random.seed(hash_val)
-            emb = np.random.randn(1024)
-            emb = emb / np.linalg.norm(emb)
-
-            response = MagicMock()
-            response.embedding = emb.tolist()
-            return response
-
-        provider.embed.side_effect = mock_embed
-
-        # Mock embed_batch to return consistent embeddings
-        def mock_embed_batch(texts, model):
-            responses = []
-            for text in texts:
-                hash_val = hash(text) % 1000
-                np.random.seed(hash_val)
-                emb = np.random.randn(1024)
-                emb = emb / np.linalg.norm(emb)
-                response = MagicMock()
-                response.embedding = emb.tolist()
-                responses.append(response)
-            return responses
-
-        provider.embed_batch.side_effect = mock_embed_batch
-
-        # Mock generate
-        def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
-            response = MagicMock()
-            if "Rate" in prompt or "correct" in prompt.lower():
-                response.text = "85"
-            else:
-                response.text = "Generated answer based on context."
-            return response
-
-        provider.generate.side_effect = mock_generate
-
-        return provider
+    @pytest.fixture
+    def mock_generate_fn(self):
+        """Create a mock generate function."""
+        return make_mock_generate_fn()
 
     @pytest.fixture
     def simple_documents(self):
@@ -271,17 +257,44 @@ class TestRagitExperiment:
             BenchmarkQuestion(question="What is Python?", ground_truth="Python is a programming language."),
         ]
 
-    def test_init(self, simple_documents, simple_benchmark, mock_provider):
+    def test_init(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test RagitExperiment initialization."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         assert experiment.documents == simple_documents
         assert experiment.benchmark == simple_benchmark
-        assert experiment.provider == mock_provider
 
-    def test_define_search_space_defaults(self, simple_documents, simple_benchmark, mock_provider):
+    def test_init_requires_embed(self, simple_documents, simple_benchmark, mock_generate_fn):
+        """Test that RagitExperiment requires embed_fn or provider."""
+        with pytest.raises(ValueError, match="Must provide embed_fn or provider"):
+            RagitExperiment(
+                documents=simple_documents,
+                benchmark=simple_benchmark,
+                generate_fn=mock_generate_fn,
+            )
+
+    def test_init_requires_llm(self, simple_documents, simple_benchmark, mock_embed_fn):
+        """Test that RagitExperiment requires LLM for evaluation."""
+        with pytest.raises(ValueError, match="RagitExperiment requires LLM"):
+            RagitExperiment(
+                documents=simple_documents,
+                benchmark=simple_benchmark,
+                embed_fn=mock_embed_fn,
+            )
+
+    def test_define_search_space_defaults(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test default search space generation."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         configs = experiment.define_search_space()
 
@@ -290,9 +303,14 @@ class TestRagitExperiment:
         # All should have valid overlap < chunk_size
         assert all(c.chunk_overlap < c.chunk_size for c in configs)
 
-    def test_define_search_space_custom(self, simple_documents, simple_benchmark, mock_provider):
+    def test_define_search_space_custom(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test custom search space generation."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         configs = experiment.define_search_space(
             chunk_sizes=[100, 200],
@@ -306,9 +324,16 @@ class TestRagitExperiment:
         assert configs[0].chunk_size == 100
         assert configs[1].chunk_size == 200
 
-    def test_define_search_space_filters_invalid(self, simple_documents, simple_benchmark, mock_provider):
+    def test_define_search_space_filters_invalid(
+        self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn
+    ):
         """Test that invalid configs (overlap >= chunk_size) are filtered."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         configs = experiment.define_search_space(
             chunk_sizes=[50],
@@ -320,9 +345,14 @@ class TestRagitExperiment:
 
         assert len(configs) == 0
 
-    def test_chunk_document(self, simple_documents, simple_benchmark, mock_provider):
+    def test_chunk_document(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test document chunking."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         doc = Document(id="test", content="A" * 100)
         chunks = experiment._chunk_document(doc, chunk_size=30, overlap=10)
@@ -331,9 +361,14 @@ class TestRagitExperiment:
         assert all(c.doc_id == "test" for c in chunks)
         assert all(len(c.content) <= 30 for c in chunks)
 
-    def test_chunk_document_overlap(self, simple_documents, simple_benchmark, mock_provider):
+    def test_chunk_document_overlap(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test that chunks overlap correctly."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         doc = Document(id="test", content="0123456789" * 10)  # 100 chars
         chunks = experiment._chunk_document(doc, chunk_size=20, overlap=5)
@@ -343,9 +378,14 @@ class TestRagitExperiment:
             # End of first chunk should appear at start of second
             assert chunks[1].content[:5] in chunks[0].content[-15:]
 
-    def test_build_index(self, simple_documents, simple_benchmark, mock_provider):
+    def test_build_index(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test index building."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         config = RAGConfig(
             name="Test", chunk_size=50, chunk_overlap=10, num_chunks=2, embedding_model="embed", llm_model="llm"
@@ -357,9 +397,14 @@ class TestRagitExperiment:
         # All chunks should have embeddings
         assert all(c.embedding is not None for c in experiment.vector_store.chunks)
 
-    def test_retrieve(self, simple_documents, simple_benchmark, mock_provider):
+    def test_retrieve(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test retrieval."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         config = RAGConfig(
             name="Test", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
@@ -371,9 +416,14 @@ class TestRagitExperiment:
         assert len(chunks) <= 2
         assert all(isinstance(c, Chunk) for c in chunks)
 
-    def test_generate(self, simple_documents, simple_benchmark, mock_provider):
+    def test_generate(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test generation."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         config = RAGConfig(
             name="Test", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
@@ -386,14 +436,20 @@ class TestRagitExperiment:
         assert isinstance(answer, str)
         assert len(answer) > 0
 
-    def test_evaluate_response(self, simple_documents, simple_benchmark, mock_provider):
+    def test_evaluate_response(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test response evaluation."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         config = RAGConfig(
             name="Test", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
         )
 
+        experiment._build_index(config)
         scores = experiment._evaluate_response(
             question="What is Python?",
             generated="Python is a programming language.",
@@ -407,9 +463,14 @@ class TestRagitExperiment:
         assert 0 <= scores.context_relevance <= 1
         assert 0 <= scores.faithfulness <= 1
 
-    def test_evaluate_config(self, simple_documents, simple_benchmark, mock_provider):
+    def test_evaluate_config(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test evaluating a configuration."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         config = RAGConfig(
             name="TestConfig", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
@@ -421,9 +482,14 @@ class TestRagitExperiment:
         assert result.execution_time > 0
         assert 0 <= result.final_score <= 1
 
-    def test_run(self, simple_documents, simple_benchmark, mock_provider):
+    def test_run(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test running the experiment."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         configs = [
             RAGConfig(
@@ -440,18 +506,28 @@ class TestRagitExperiment:
         # Results should be sorted by score (best first)
         assert results[0].final_score >= results[1].final_score
 
-    def test_run_with_max_configs(self, simple_documents, simple_benchmark, mock_provider):
+    def test_run_with_max_configs(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test running with max_configs limit."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         configs = experiment.define_search_space()
         results = experiment.run(configs=configs, max_configs=1, verbose=False)
 
         assert len(results) == 1
 
-    def test_get_best_config(self, simple_documents, simple_benchmark, mock_provider):
+    def test_get_best_config(self, simple_documents, simple_benchmark, mock_embed_fn, mock_generate_fn):
         """Test getting best configuration."""
-        experiment = RagitExperiment(documents=simple_documents, benchmark=simple_benchmark, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            embed_fn=mock_embed_fn,
+            generate_fn=mock_generate_fn,
+        )
 
         # Before running, should return None
         assert experiment.get_best_config() is None
@@ -469,57 +545,133 @@ class TestRagitExperiment:
         assert best.pattern_name == "Config1"
 
 
-class TestRagitExperimentVerbose:
-    """Tests for verbose output of RagitExperiment."""
+class MockExperimentProvider:
+    """Mock provider for testing that implements both embedding and LLM interfaces."""
 
-    @pytest.fixture
-    def mock_provider(self):
-        """Create a mock provider."""
-        provider = MagicMock()
-        provider.provider_name = "mock"
+    def __init__(self):
+        self.provider_name = "mock"
+        self._dimensions = 1024
 
-        def mock_embed(text, model):
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    def is_available(self) -> bool:
+        return True
+
+    def embed(self, text, model=""):
+        hash_val = hash(text) % 1000
+        np.random.seed(hash_val)
+        emb = np.random.randn(1024)
+        emb = emb / np.linalg.norm(emb)
+
+        response = MagicMock()
+        response.embedding = emb.tolist()
+        return response
+
+    def embed_batch(self, texts, model=""):
+        responses = []
+        for text in texts:
             hash_val = hash(text) % 1000
             np.random.seed(hash_val)
             emb = np.random.randn(1024)
             emb = emb / np.linalg.norm(emb)
             response = MagicMock()
             response.embedding = emb.tolist()
-            return response
+            responses.append(response)
+        return responses
 
-        provider.embed.side_effect = mock_embed
+    def generate(self, prompt, model="", system_prompt=None, temperature=0.7, max_tokens=None):
+        response = MagicMock()
+        if "Rate" in prompt or "correct" in prompt.lower():
+            response.text = "85"
+        else:
+            response.text = "Generated answer based on context."
+        return response
 
-        def mock_embed_batch(texts, model):
-            responses = []
-            for text in texts:
-                hash_val = hash(text) % 1000
-                np.random.seed(hash_val)
-                emb = np.random.randn(1024)
-                emb = emb / np.linalg.norm(emb)
-                response = MagicMock()
-                response.embedding = emb.tolist()
-                responses.append(response)
-            return responses
 
-        provider.embed_batch.side_effect = mock_embed_batch
+# Register MockExperimentProvider as implementing the base classes
+from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
 
-        def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
-            response = MagicMock()
-            if "Rate" in prompt:
-                response.text = "75"
-            else:
-                response.text = "Answer."
-            return response
+BaseEmbeddingProvider.register(MockExperimentProvider)
+BaseLLMProvider.register(MockExperimentProvider)
 
-        provider.generate.side_effect = mock_generate
-        return provider
 
-    def test_evaluate_config_verbose(self, mock_provider, capsys):
+class TestRagitExperimentWithProvider:
+    """Tests for RagitExperiment using provider parameter."""
+
+    @pytest.fixture
+    def mock_provider(self):
+        """Create a mock provider that implements both embedding and LLM."""
+        return MockExperimentProvider()
+
+    @pytest.fixture
+    def simple_documents(self):
+        """Create simple test documents."""
+        return [
+            Document(id="doc1", content="Python is a programming language. It is easy to learn."),
+            Document(id="doc2", content="Machine learning uses data to train models."),
+        ]
+
+    @pytest.fixture
+    def simple_benchmark(self):
+        """Create simple benchmark questions."""
+        return [
+            BenchmarkQuestion(question="What is Python?", ground_truth="Python is a programming language."),
+        ]
+
+    def test_init_with_provider(self, simple_documents, simple_benchmark, mock_provider):
+        """Test RagitExperiment initialization with provider."""
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            provider=mock_provider,
+        )
+
+        assert experiment.documents == simple_documents
+        assert experiment.benchmark == simple_benchmark
+
+    def test_run_with_provider(self, simple_documents, simple_benchmark, mock_provider):
+        """Test running with provider."""
+        experiment = RagitExperiment(
+            documents=simple_documents,
+            benchmark=simple_benchmark,
+            provider=mock_provider,
+        )
+
+        configs = [
+            RAGConfig(
+                name="Test", chunk_size=100, chunk_overlap=20, num_chunks=2, embedding_model="embed", llm_model="llm"
+            ),
+        ]
+
+        results = experiment.run(configs=configs, verbose=False)
+
+        assert len(results) == 1
+        assert results[0].pattern_name == "Test"
+
+
+class TestRagitExperimentVerbose:
+    """Tests for verbose output of RagitExperiment."""
+
+    @pytest.fixture
+    def mock_embed_fn(self):
+        """Create a mock embed function."""
+        return make_mock_embed_fn()
+
+    @pytest.fixture
+    def mock_generate_fn(self):
+        """Create a mock generate function."""
+        return make_mock_generate_fn("75")
+
+    def test_evaluate_config_verbose(self, mock_embed_fn, mock_generate_fn, capsys):
         """Test verbose output during evaluation."""
         docs = [Document(id="d1", content="Test content for verbose output testing.")]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=docs, benchmark=bench, embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
+        )
         config = RAGConfig(
             name="VerboseTest", chunk_size=100, chunk_overlap=10, num_chunks=1, embedding_model="embed", llm_model="llm"
         )
@@ -530,12 +682,14 @@ class TestRagitExperimentVerbose:
         assert "VerboseTest" in captured.out
         assert "chunk_size=" in captured.out
 
-    def test_run_verbose(self, mock_provider, capsys):
+    def test_run_verbose(self, mock_embed_fn, mock_generate_fn, capsys):
         """Test verbose output during run."""
         docs = [Document(id="d1", content="Content.")]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=docs, benchmark=bench, embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
+        )
         configs = [
             RAGConfig(name="Test", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="e", llm_model="l")
         ]
@@ -546,12 +700,14 @@ class TestRagitExperimentVerbose:
         assert "RAGIT" in captured.out
         assert "RESULTS" in captured.out
 
-    def test_run_default_configs(self, mock_provider):
+    def test_run_default_configs(self, mock_embed_fn, mock_generate_fn):
         """Test run with default search space."""
         docs = [Document(id="d1", content="A" * 1000)]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=docs, benchmark=bench, embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
+        )
 
         # Run with default configs but limit to 1
         results = experiment.run(max_configs=1, verbose=False)
@@ -563,43 +719,22 @@ class TestScoreExtraction:
     """Tests for score extraction edge cases."""
 
     @pytest.fixture
-    def mock_provider_scores(self):
-        """Create a mock provider with configurable scores."""
-        provider = MagicMock()
-        provider.provider_name = "mock"
+    def mock_embed_fn(self):
+        """Create a mock embed function."""
 
-        def mock_embed(text, model):
-            response = MagicMock()
-            response.embedding = [0.1] * 100
-            return response
+        def embed_fn(text: str) -> list[float]:
+            return [0.1] * 100
 
-        provider.embed.side_effect = mock_embed
+        return embed_fn
 
-        def mock_embed_batch(texts, model):
-            responses = []
-            for _ in texts:
-                response = MagicMock()
-                response.embedding = [0.1] * 100
-                responses.append(response)
-            return responses
-
-        provider.embed_batch.side_effect = mock_embed_batch
-        return provider
-
-    def test_score_extraction_no_number(self, mock_provider_scores):
+    def test_score_extraction_no_number(self, mock_embed_fn):
         """Test score extraction when no number in response."""
-
-        def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
-            response = MagicMock()
-            response.text = "no numbers here"
-            return response
-
-        mock_provider_scores.generate.side_effect = mock_generate
+        generate_fn = make_mock_generate_fn("no numbers here")
 
         docs = [Document(id="d1", content="Content")]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider_scores)
+        experiment = RagitExperiment(documents=docs, benchmark=bench, embed_fn=mock_embed_fn, generate_fn=generate_fn)
         config = RAGConfig(name="T", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="e", llm_model="l")
 
         experiment._build_index(config)
@@ -608,20 +743,14 @@ class TestScoreExtraction:
         # Should default to 0.5 when no number found
         assert 0 <= scores.answer_correctness <= 1
 
-    def test_score_extraction_decimal(self, mock_provider_scores):
+    def test_score_extraction_decimal(self, mock_embed_fn):
         """Test score extraction with decimal number."""
-
-        def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
-            response = MagicMock()
-            response.text = "Score: 85.5 out of 100"
-            return response
-
-        mock_provider_scores.generate.side_effect = mock_generate
+        generate_fn = make_mock_generate_fn("Score: 85.5 out of 100")
 
         docs = [Document(id="d1", content="Content")]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider_scores)
+        experiment = RagitExperiment(documents=docs, benchmark=bench, embed_fn=mock_embed_fn, generate_fn=generate_fn)
         config = RAGConfig(name="T", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="e", llm_model="l")
 
         experiment._build_index(config)
@@ -629,20 +758,14 @@ class TestScoreExtraction:
 
         assert 0 <= scores.answer_correctness <= 1
 
-    def test_score_extraction_over_100(self, mock_provider_scores):
+    def test_score_extraction_over_100(self, mock_embed_fn):
         """Test score extraction with value over 100."""
-
-        def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
-            response = MagicMock()
-            response.text = "150"  # Over 100, should be capped
-            return response
-
-        mock_provider_scores.generate.side_effect = mock_generate
+        generate_fn = make_mock_generate_fn("150")  # Over 100, should be capped
 
         docs = [Document(id="d1", content="Content")]
         bench = [BenchmarkQuestion(question="Q?", ground_truth="A")]
 
-        experiment = RagitExperiment(documents=docs, benchmark=bench, provider=mock_provider_scores)
+        experiment = RagitExperiment(documents=docs, benchmark=bench, embed_fn=mock_embed_fn, generate_fn=generate_fn)
         config = RAGConfig(name="T", chunk_size=50, chunk_overlap=10, num_chunks=1, embedding_model="e", llm_model="l")
 
         experiment._build_index(config)
@@ -656,32 +779,42 @@ class TestChunkingEdgeCases:
     """Tests for document chunking edge cases."""
 
     @pytest.fixture
-    def mock_provider(self):
-        provider = MagicMock()
-        provider.provider_name = "mock"
-        return provider
+    def mock_embed_fn(self):
+        """Create a mock embed function."""
+        return make_mock_embed_fn()
 
-    def test_chunk_empty_document(self, mock_provider):
+    @pytest.fixture
+    def mock_generate_fn(self):
+        """Create a mock generate function."""
+        return make_mock_generate_fn()
+
+    def test_chunk_empty_document(self, mock_embed_fn, mock_generate_fn):
         """Test chunking an empty document."""
-        experiment = RagitExperiment(documents=[], benchmark=[], provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
+        )
 
         doc = Document(id="empty", content="")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)
 
         assert len(chunks) == 0
 
-    def test_chunk_whitespace_only(self, mock_provider):
+    def test_chunk_whitespace_only(self, mock_embed_fn, mock_generate_fn):
         """Test chunking whitespace-only document."""
-        experiment = RagitExperiment(documents=[], benchmark=[], provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
+        )
 
         doc = Document(id="ws", content="   \n\t  ")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)
 
         assert len(chunks) == 0
 
-    def test_chunk_small_document(self, mock_provider):
+    def test_chunk_small_document(self, mock_embed_fn, mock_generate_fn):
         """Test chunking document smaller than chunk size."""
-        experiment = RagitExperiment(documents=[], benchmark=[], provider=mock_provider)
+        experiment = RagitExperiment(
+            documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
+        )
 
         doc = Document(id="small", content="Hello")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)

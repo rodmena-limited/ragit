@@ -59,6 +59,8 @@ dev = [
 
 test = ["pytest", "pytest-cov", "pytest-mock"]
 
+transformers = ["sentence-transformers>=2.2.0"]
+
 docs = [
     "sphinx>=7.0",
     "sphinx-rtd-theme>=2.0",
@@ -79,7 +81,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 log_cli = false
 log_level = "INFO"
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not integration'"
 markers = [
     "integration: marks tests as integration tests (may require external services)",
 ]

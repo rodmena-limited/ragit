@@ -9,6 +9,7 @@ This module provides the main experiment class for optimizing RAG hyperparameter
 """
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import product
 from typing import Any
@@ -16,9 +17,9 @@ from typing import Any
 import numpy as np
 from tqdm import tqdm
 
-from ragit.config import config
 from ragit.core.experiment.results import EvaluationResult
-from ragit.providers import OllamaProvider
+from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
+from ragit.providers.function_adapter import FunctionProvider
 
 
 @dataclass
@@ -145,14 +146,28 @@ class RagitExperiment:
         Documents to use as the knowledge base.
     benchmark : list[BenchmarkQuestion]
         Benchmark questions for evaluation.
-    provider : OllamaProvider, optional
-        LLM/Embedding provider. Defaults to OllamaProvider().
+    embed_fn : Callable[[str], list[float]], optional
+        Function that takes text and returns an embedding vector.
+    generate_fn : Callable, optional
+        Function for text generation.
+    provider : BaseEmbeddingProvider, optional
+        Provider for embeddings and LLM. If embed_fn is provided, this is
+        ignored for embeddings but can be used for LLM.
+
+    Raises
+    ------
+    ValueError
+        If neither embed_fn nor provider is provided.
 
     Examples
     --------
-    >>> documents = [Document(id="doc1", content="...")]
-    >>> benchmark = [BenchmarkQuestion(question="...", ground_truth="...")]
-    >>> experiment = RagitExperiment(documents, benchmark)
+    >>> # With custom functions
+    >>> experiment = RagitExperiment(docs, benchmark, embed_fn=my_embed, generate_fn=my_llm)
+    >>>
+    >>> # With explicit provider
+    >>> from ragit.providers import OllamaProvider
+    >>> experiment = RagitExperiment(docs, benchmark, provider=OllamaProvider())
+    >>>
     >>> results = experiment.run()
     >>> print(results[0].config)  # Best configuration
     """
@@ -161,13 +176,58 @@ class RagitExperiment:
         self,
         documents: list[Document],
         benchmark: list[BenchmarkQuestion],
-        provider: OllamaProvider | None = None,
+        embed_fn: Callable[[str], list[float]] | None = None,
+        generate_fn: Callable[..., str] | None = None,
+        provider: BaseEmbeddingProvider | BaseLLMProvider | None = None,
     ):
         self.documents = documents
         self.benchmark = benchmark
-        self.provider = provider or OllamaProvider()
         self.vector_store = SimpleVectorStore()
         self.results: list[EvaluationResult] = []
+
+        # Resolve provider from functions or explicit provider
+        self._embedding_provider: BaseEmbeddingProvider
+        self._llm_provider: BaseLLMProvider | None = None
+
+        if embed_fn is not None:
+            # Create FunctionProvider from provided functions
+            function_provider = FunctionProvider(
+                embed_fn=embed_fn,
+                generate_fn=generate_fn,
+            )
+            self._embedding_provider = function_provider
+            if generate_fn is not None:
+                self._llm_provider = function_provider
+            elif provider is not None and isinstance(provider, BaseLLMProvider):
+                self._llm_provider = provider
+        elif provider is not None:
+            if not isinstance(provider, BaseEmbeddingProvider):
+                raise ValueError(
+                    "Provider must implement BaseEmbeddingProvider for embeddings. "
+                    "Alternatively, provide embed_fn."
+                )
+            self._embedding_provider = provider
+            if isinstance(provider, BaseLLMProvider):
+                self._llm_provider = provider
+        else:
+            raise ValueError(
+                "Must provide embed_fn or provider for embeddings. "
+                "Examples:\n"
+                "  RagitExperiment(docs, benchmark, embed_fn=my_embed, generate_fn=my_llm)\n"
+                "  RagitExperiment(docs, benchmark, provider=OllamaProvider())"
+            )
+
+        # LLM is required for evaluation
+        if self._llm_provider is None:
+            raise ValueError(
+                "RagitExperiment requires LLM for evaluation. "
+                "Provide generate_fn or a provider with LLM support."
+            )
+
+    @property
+    def provider(self) -> BaseEmbeddingProvider:
+        """Return the embedding provider (for backwards compatibility)."""
+        return self._embedding_provider
 
     def define_search_space(
         self,
@@ -187,11 +247,11 @@ class RagitExperiment:
         chunk_overlaps : list[int], optional
             Chunk overlaps to test. Default: [50, 100]
         num_chunks_options : list[int], optional
-            Number of chunks to retrieve. Default: [2, 3, 5]
+            Number of chunks to retrieve. Default: [2, 3]
         embedding_models : list[str], optional
-            Embedding models to test. Default: from RAGIT_DEFAULT_EMBEDDING_MODEL env var
+            Embedding models to test. Default: ["default"]
         llm_models : list[str], optional
-            LLM models to test. Default: from RAGIT_DEFAULT_LLM_MODEL env var
+            LLM models to test. Default: ["default"]
 
         Returns
         -------
@@ -201,8 +261,8 @@ class RagitExperiment:
         chunk_sizes = chunk_sizes or [256, 512]
         chunk_overlaps = chunk_overlaps or [50, 100]
         num_chunks_options = num_chunks_options or [2, 3]
-        embedding_models = embedding_models or [config.DEFAULT_EMBEDDING_MODEL]
-        llm_models = llm_models or [config.DEFAULT_LLM_MODEL]
+        embedding_models = embedding_models or ["default"]
+        llm_models = llm_models or ["default"]
 
         configs = []
         pattern_num = 1
@@ -270,7 +330,7 @@ class RagitExperiment:
 
         # Batch embed all chunks at once (single API call)
         texts = [chunk.content for chunk in all_chunks]
-        responses = self.provider.embed_batch(texts, config.embedding_model)
+        responses = self._embedding_provider.embed_batch(texts, config.embedding_model)
 
         for chunk, response in zip(all_chunks, responses, strict=True):
             chunk.embedding = response.embedding
@@ -279,12 +339,15 @@ class RagitExperiment:
 
     def _retrieve(self, query: str, config: RAGConfig) -> list[Chunk]:
         """Retrieve relevant chunks for a query."""
-        query_response = self.provider.embed(query, config.embedding_model)
+        query_response = self._embedding_provider.embed(query, config.embedding_model)
         results = self.vector_store.search(query_response.embedding, top_k=config.num_chunks)
         return [chunk for chunk, _ in results]
 
     def _generate(self, question: str, context: str, config: RAGConfig) -> str:
         """Generate answer using RAG."""
+        if self._llm_provider is None:
+            raise ValueError("LLM provider is required for generation")
+
         system_prompt = """You are a helpful assistant. Answer questions based ONLY on the provided context.
 If the context doesn't contain enough information, say so. Be concise and accurate."""
 
@@ -295,7 +358,7 @@ Question: {question}
 
 Answer:"""
 
-        response = self.provider.generate(
+        response = self._llm_provider.generate(
             prompt=prompt,
             model=config.llm_model,
             system_prompt=system_prompt,
@@ -312,6 +375,8 @@ Answer:"""
         config: RAGConfig,
     ) -> EvaluationScores:
         """Evaluate a RAG response using LLM-as-judge."""
+        if self._llm_provider is None:
+            raise ValueError("LLM provider is required for evaluation")
 
         def extract_score(response: str) -> float:
             """Extract numeric score from LLM response."""
@@ -334,7 +399,7 @@ Generated Answer: {generated}
 
 Respond with ONLY a number 0-100."""
 
-        resp = self.provider.generate(correctness_prompt, config.llm_model)
+        resp = self._llm_provider.generate(correctness_prompt, config.llm_model)
         correctness = extract_score(resp.text)
 
         # Evaluate context relevance
@@ -345,7 +410,7 @@ Context: {context[:1000]}
 
 Respond with ONLY a number 0-100."""
 
-        resp = self.provider.generate(relevance_prompt, config.llm_model)
+        resp = self._llm_provider.generate(relevance_prompt, config.llm_model)
         relevance = extract_score(resp.text)
 
         # Evaluate faithfulness
@@ -356,7 +421,7 @@ Answer: {generated}
 
 Respond with ONLY a number 0-100."""
 
-        resp = self.provider.generate(faithfulness_prompt, config.llm_model)
+        resp = self._llm_provider.generate(faithfulness_prompt, config.llm_model)
         faithfulness = extract_score(resp.text)
 
         return EvaluationScores(

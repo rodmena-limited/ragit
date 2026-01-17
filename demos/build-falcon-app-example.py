@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from ragit import RAGAssistant
+from ragit.providers import OllamaProvider
 
 # Falcon-specific system prompt
 FALCON_SYSTEM_PROMPT = """You are a Falcon web framework expert. Generate ONLY valid Python code.
@@ -38,7 +39,12 @@ def main():
 
     # Load Falcon documentation and create assistant
     docs_path = Path(__file__).parent / "falcon-tutorial.rst"
-    assistant = RAGAssistant(docs_path)
+    assistant = RAGAssistant(
+        docs_path,
+        provider=OllamaProvider(),
+        embedding_model="nomic-embed-text:latest",
+        llm_model="qwen3-coder:480b-cloud",
+    )
 
     # Generate code with custom system prompt
     context = assistant.get_context(request, top_k=3)

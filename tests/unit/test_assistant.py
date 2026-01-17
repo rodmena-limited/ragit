@@ -13,15 +13,31 @@ import pytest
 
 from ragit import Document
 from ragit.assistant import RAGAssistant
+from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
 
 
-@pytest.fixture
-def mock_provider():
-    """Create a mock provider."""
-    provider = MagicMock()
-    provider.provider_name = "mock"
+class MockProvider(BaseEmbeddingProvider, BaseLLMProvider):
+    """Mock provider for testing that implements both base classes."""
 
-    def mock_embed(text, model):
+    def __init__(self):
+        self._dimensions = 1024
+        # Track method calls
+        self.embed_called = False
+        self.generate_called = False
+
+    @property
+    def provider_name(self) -> str:
+        return "mock"
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    def is_available(self) -> bool:
+        return True
+
+    def embed(self, text, model=""):
+        self.embed_called = True
         # Create deterministic embeddings based on text hash
         hash_val = hash(text) % 1000
         np.random.seed(hash_val)
@@ -31,9 +47,7 @@ def mock_provider():
         response.embedding = emb.tolist()
         return response
 
-    provider.embed.side_effect = mock_embed
-
-    def mock_embed_batch(texts, model):
+    def embed_batch(self, texts, model=""):
         # Create deterministic embeddings for batch
         responses = []
         for text in texts:
@@ -46,16 +60,17 @@ def mock_provider():
             responses.append(response)
         return responses
 
-    provider.embed_batch.side_effect = mock_embed_batch
-
-    def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
+    def generate(self, prompt, model="", system_prompt=None, temperature=0.7, max_tokens=None):
+        self.generate_called = True
         response = MagicMock()
         response.text = "Generated response based on context."
         return response
 
-    provider.generate.side_effect = mock_generate
 
-    return provider
+@pytest.fixture
+def mock_provider():
+    """Create a mock provider."""
+    return MockProvider()
 
 
 @pytest.fixture
@@ -79,6 +94,11 @@ def sample_documents():
 
 class TestRAGAssistantInit:
     """Tests for RAGAssistant initialization."""
+
+    def test_init_requires_provider_or_embed_fn(self, sample_documents):
+        """Test that initialization requires embed_fn or provider."""
+        with pytest.raises(ValueError, match="Must provide embed_fn or provider"):
+            RAGAssistant(sample_documents)
 
     def test_init_with_documents(self, sample_documents, mock_provider):
         """Test initialization with document list."""
@@ -218,7 +238,7 @@ class TestRAGAssistantGenerate:
         assistant.generate("Test prompt")
 
         # Provider.generate should have been called
-        assert mock_provider.generate.called
+        assert mock_provider.generate_called
 
 
 class TestRAGAssistantAsk:
@@ -240,9 +260,9 @@ class TestRAGAssistantAsk:
         assistant.ask("What is Falcon?", top_k=2)
 
         # Provider.embed should be called for query
-        assert mock_provider.embed.called
+        assert mock_provider.embed_called
         # Provider.generate should be called
-        assert mock_provider.generate.called
+        assert mock_provider.generate_called
 
     def test_ask_with_custom_params(self, sample_documents, mock_provider):
         """Test ask with custom parameters."""
@@ -266,33 +286,40 @@ class TestRAGAssistantGenerateCode:
 
     def test_generate_code_cleans_markdown(self, sample_documents):
         """Test that markdown code blocks are removed."""
-        mock_prov = MagicMock()
 
-        def mock_embed(text, model):
-            response = MagicMock()
-            response.embedding = [0.1] * 1024
-            return response
+        class MarkdownMockProvider(BaseEmbeddingProvider, BaseLLMProvider):
+            """Mock provider that returns markdown code."""
 
-        mock_prov.embed.side_effect = mock_embed
+            @property
+            def provider_name(self) -> str:
+                return "mock"
 
-        def mock_embed_batch(texts, model):
-            responses = []
-            for _ in texts:
+            @property
+            def dimensions(self) -> int:
+                return 1024
+
+            def is_available(self) -> bool:
+                return True
+
+            def embed(self, text, model=""):
                 response = MagicMock()
                 response.embedding = [0.1] * 1024
-                responses.append(response)
-            return responses
+                return response
 
-        mock_prov.embed_batch.side_effect = mock_embed_batch
+            def embed_batch(self, texts, model=""):
+                responses = []
+                for _ in texts:
+                    response = MagicMock()
+                    response.embedding = [0.1] * 1024
+                    responses.append(response)
+                return responses
 
-        def mock_generate(prompt, model, system_prompt=None, temperature=0.7):
-            response = MagicMock()
-            response.text = "```python\nprint('hello')\n```"
-            return response
+            def generate(self, prompt, model="", system_prompt=None, temperature=0.7, max_tokens=None):
+                response = MagicMock()
+                response.text = "```python\nprint('hello')\n```"
+                return response
 
-        mock_prov.generate.side_effect = mock_generate
-
-        assistant = RAGAssistant(sample_documents, provider=mock_prov)
+        assistant = RAGAssistant(sample_documents, provider=MarkdownMockProvider())
         code = assistant.generate_code("hello world")
 
         assert "```" not in code
@@ -322,3 +349,105 @@ class TestRAGAssistantProperties:
         assistant = RAGAssistant(sample_documents, provider=mock_provider)
 
         assert assistant.num_documents == 3
+
+    def test_has_llm_with_full_provider(self, sample_documents, mock_provider):
+        """Test has_llm property with provider that has LLM."""
+        assistant = RAGAssistant(sample_documents, provider=mock_provider)
+        assert assistant.has_llm is True
+
+    def test_has_llm_with_embed_only(self, sample_documents):
+        """Test has_llm property with embed_fn only (no LLM)."""
+
+        def mock_embed(text):
+            return [0.1] * 1024
+
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed)
+        assert assistant.has_llm is False
+
+
+class TestRAGAssistantEmbedFn:
+    """Tests for RAGAssistant with embed_fn parameter."""
+
+    @pytest.fixture
+    def mock_embed_fn(self):
+        """Create a mock embedding function."""
+
+        def embed_fn(text: str) -> list[float]:
+            hash_val = hash(text) % 1000
+            np.random.seed(hash_val)
+            emb = np.random.randn(1024)
+            emb = emb / np.linalg.norm(emb)
+            return emb.tolist()
+
+        return embed_fn
+
+    @pytest.fixture
+    def mock_generate_fn(self):
+        """Create a mock generation function."""
+
+        def generate_fn(prompt: str, system_prompt: str | None = None) -> str:
+            return "Generated response."
+
+        return generate_fn
+
+    def test_init_with_embed_fn(self, sample_documents, mock_embed_fn):
+        """Test initialization with embed_fn."""
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed_fn)
+
+        assert assistant.num_documents == 3
+        assert assistant.num_chunks > 0
+        assert assistant.has_llm is False
+
+    def test_init_with_embed_and_generate_fn(self, sample_documents, mock_embed_fn, mock_generate_fn):
+        """Test initialization with both embed_fn and generate_fn."""
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed_fn, generate_fn=mock_generate_fn)
+
+        assert assistant.has_llm is True
+
+    def test_retrieve_works_without_llm(self, sample_documents, mock_embed_fn):
+        """Test that retrieve works without LLM configured."""
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed_fn)
+
+        results = assistant.retrieve("Python", top_k=2)
+
+        assert len(results) == 2
+        assert all(isinstance(r, tuple) for r in results)
+
+    def test_get_context_works_without_llm(self, sample_documents, mock_embed_fn):
+        """Test that get_context works without LLM configured."""
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed_fn)
+
+        context = assistant.get_context("Python", top_k=2)
+
+        assert isinstance(context, str)
+        assert len(context) > 0
+
+    def test_ask_raises_without_llm(self, sample_documents, mock_embed_fn):
+        """Test that ask raises NotImplementedError without LLM."""
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed_fn)
+
+        with pytest.raises(NotImplementedError, match="No LLM configured"):
+            assistant.ask("What is Python?")
+
+    def test_generate_raises_without_llm(self, sample_documents, mock_embed_fn):
+        """Test that generate raises NotImplementedError without LLM."""
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed_fn)
+
+        with pytest.raises(NotImplementedError, match="No LLM configured"):
+            assistant.generate("Tell me about Python")
+
+    def test_generate_code_raises_without_llm(self, sample_documents, mock_embed_fn):
+        """Test that generate_code raises NotImplementedError without LLM."""
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed_fn)
+
+        with pytest.raises(NotImplementedError, match="No LLM configured"):
+            assistant.generate_code("hello world function")
+
+    def test_ask_works_with_generate_fn(self, sample_documents, mock_embed_fn, mock_generate_fn):
+        """Test that ask works with generate_fn."""
+        assistant = RAGAssistant(sample_documents, embed_fn=mock_embed_fn, generate_fn=mock_generate_fn)
+
+        answer = assistant.ask("What is Python?")
+
+        assert isinstance(answer, str)
+        assert len(answer) > 0
