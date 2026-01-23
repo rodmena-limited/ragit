@@ -156,7 +156,7 @@ class RAGAssistant:
 
         if path.is_dir():
             docs: list[Document] = []
-            for pattern in ("*.txt", "*.md", "*.rst"):
+            for pattern in ("*.txt", "*.md", "*.rst", "*.py", "*.js", "*.ts", "*.go", "*.java", "*.c", "*.cpp", "*.h", "*.hpp"):
                 docs.extend(load_directory(path, pattern))
             return docs
 
@@ -193,6 +193,130 @@ class RAGAssistant:
         # Store as immutable tuple and pre-normalized numpy matrix
         self._chunks = tuple(all_chunks)
         self._embedding_matrix = embedding_matrix / norms
+
+    def add_documents(self, documents: list[Document] | str | Path) -> int:
+        """Add documents to the existing index incrementally.
+
+        Args:
+            documents: Documents to add.
+
+        Returns:
+            Number of chunks added.
+        """
+        new_docs = self._load_documents(documents)
+        if not new_docs:
+            return 0
+            
+        self.documents.extend(new_docs)
+        
+        # Chunk new docs
+        new_chunks: list[Chunk] = []
+        for doc in new_docs:
+            if doc.metadata.get("filename", "").endswith(".rst"):
+                chunks = chunk_rst_sections(doc.content, doc.id)
+            else:
+                chunks = chunk_document(doc, self.chunk_size, self.chunk_overlap)
+            new_chunks.extend(chunks)
+            
+        if not new_chunks:
+            return 0
+
+        # Embed new chunks
+        texts = [chunk.content for chunk in new_chunks]
+        responses = self._embedding_provider.embed_batch(texts, self.embedding_model)
+        
+        new_matrix = np.array([response.embedding for response in responses], dtype=np.float64)
+        
+        # Normalize
+        norms = np.linalg.norm(new_matrix, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        new_matrix_norm = new_matrix / norms
+        
+        # Update state
+        current_chunks = list(self._chunks)
+        current_chunks.extend(new_chunks)
+        self._chunks = tuple(current_chunks)
+        
+        if self._embedding_matrix is None:
+            self._embedding_matrix = new_matrix_norm
+        else:
+            self._embedding_matrix = np.vstack((self._embedding_matrix, new_matrix_norm))
+            
+        return len(new_chunks)
+
+    def remove_documents(self, source_path_pattern: str) -> int:
+        """Remove documents matching a source path pattern.
+
+        Args:
+            source_path_pattern: Glob pattern to match 'source' metadata.
+
+        Returns:
+            Number of chunks removed.
+        """
+        import fnmatch
+        
+        if not self._chunks:
+            return 0
+            
+        indices_to_keep = []
+        kept_chunks = []
+        removed_count = 0
+        
+        for i, chunk in enumerate(self._chunks):
+            source = chunk.metadata.get("source", "")
+            if not source or not fnmatch.fnmatch(source, source_path_pattern):
+                indices_to_keep.append(i)
+                kept_chunks.append(chunk)
+            else:
+                removed_count += 1
+                
+        if removed_count == 0:
+            return 0
+            
+        self._chunks = tuple(kept_chunks)
+        
+        if self._embedding_matrix is not None:
+            if not kept_chunks:
+                self._embedding_matrix = None
+            else:
+                self._embedding_matrix = self._embedding_matrix[indices_to_keep]
+            
+        # Also remove from self.documents
+        self.documents = [
+            doc for doc in self.documents 
+            if not fnmatch.fnmatch(doc.metadata.get("source", ""), source_path_pattern)
+        ]
+        
+        return removed_count
+
+    def update_documents(self, documents: list[Document] | str | Path) -> int:
+        """Update existing documents (remove old, add new).
+
+        Uses document source path to identify what to remove.
+
+        Args:
+            documents: New versions of documents.
+
+        Returns:
+            Number of chunks added.
+        """
+        new_docs = self._load_documents(documents)
+        if not new_docs:
+            return 0
+            
+        # Identify sources to remove
+        sources_to_remove = set()
+        for doc in new_docs:
+            source = doc.metadata.get("source")
+            if source:
+                sources_to_remove.add(source)
+                
+        # Remove old versions
+        for source in sources_to_remove:
+            self.remove_documents(source)
+            
+        # Add new versions
+        return self.add_documents(new_docs)
 
     def retrieve(self, query: str, top_k: int = 3) -> list[tuple[Chunk, float]]:
         """
