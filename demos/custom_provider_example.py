@@ -129,9 +129,7 @@ class OllamaProvider(BaseEmbeddingProvider, BaseLLMProvider):
             dimensions=self._dimensions,
         )
 
-    def embed_batch(
-        self, texts: list[str], model: str | None = None
-    ) -> list[EmbeddingResponse]:
+    def embed_batch(self, texts: list[str], model: str | None = None) -> list[EmbeddingResponse]:
         """Batch embedding - iterate over texts."""
         return [self.embed(text, model) for text in texts]
 

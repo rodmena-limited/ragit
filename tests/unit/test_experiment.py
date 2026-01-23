@@ -790,9 +790,7 @@ class TestChunkingEdgeCases:
 
     def test_chunk_empty_document(self, mock_embed_fn, mock_generate_fn):
         """Test chunking an empty document."""
-        experiment = RagitExperiment(
-            documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
-        )
+        experiment = RagitExperiment(documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn)
 
         doc = Document(id="empty", content="")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)
@@ -801,9 +799,7 @@ class TestChunkingEdgeCases:
 
     def test_chunk_whitespace_only(self, mock_embed_fn, mock_generate_fn):
         """Test chunking whitespace-only document."""
-        experiment = RagitExperiment(
-            documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
-        )
+        experiment = RagitExperiment(documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn)
 
         doc = Document(id="ws", content="   \n\t  ")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)
@@ -812,9 +808,7 @@ class TestChunkingEdgeCases:
 
     def test_chunk_small_document(self, mock_embed_fn, mock_generate_fn):
         """Test chunking document smaller than chunk size."""
-        experiment = RagitExperiment(
-            documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn
-        )
+        experiment = RagitExperiment(documents=[], benchmark=[], embed_fn=mock_embed_fn, generate_fn=mock_generate_fn)
 
         doc = Document(id="small", content="Hello")
         chunks = experiment._chunk_document(doc, chunk_size=100, overlap=10)

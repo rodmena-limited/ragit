@@ -203,8 +203,7 @@ class RagitExperiment:
         elif provider is not None:
             if not isinstance(provider, BaseEmbeddingProvider):
                 raise ValueError(
-                    "Provider must implement BaseEmbeddingProvider for embeddings. "
-                    "Alternatively, provide embed_fn."
+                    "Provider must implement BaseEmbeddingProvider for embeddings. Alternatively, provide embed_fn."
                 )
             self._embedding_provider = provider
             if isinstance(provider, BaseLLMProvider):
@@ -220,8 +219,7 @@ class RagitExperiment:
         # LLM is required for evaluation
         if self._llm_provider is None:
             raise ValueError(
-                "RagitExperiment requires LLM for evaluation. "
-                "Provide generate_fn or a provider with LLM support."
+                "RagitExperiment requires LLM for evaluation. Provide generate_fn or a provider with LLM support."
             )
 
     @property
