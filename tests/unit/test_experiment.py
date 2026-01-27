@@ -20,6 +20,7 @@ from ragit.core.experiment.experiment import (
     RagitExperiment,
     SimpleVectorStore,
 )
+from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
 
 
 class TestRAGConfig:
@@ -591,7 +592,6 @@ class MockExperimentProvider:
 
 
 # Register MockExperimentProvider as implementing the base classes
-from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
 
 BaseEmbeddingProvider.register(MockExperimentProvider)
 BaseLLMProvider.register(MockExperimentProvider)
