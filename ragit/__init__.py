@@ -16,11 +16,7 @@ Quick Start
 >>> assistant = RAGAssistant("docs/", embed_fn=my_embed)
 >>> results = assistant.retrieve("How do I create a REST API?")
 >>>
->>> # With SentenceTransformers (offline, requires ragit[transformers])
->>> from ragit.providers import SentenceTransformersProvider
->>> assistant = RAGAssistant("docs/", provider=SentenceTransformersProvider())
->>>
->>> # With Ollama (explicit)
+>>> # With Ollama
 >>> from ragit.providers import OllamaProvider
 >>> assistant = RAGAssistant("docs/", provider=OllamaProvider())
 >>> answer = assistant.ask("How do I create a REST API?")
@@ -63,14 +59,27 @@ from ragit.core.experiment.experiment import (  # noqa: E402
     RagitExperiment,
 )
 from ragit.core.experiment.results import EvaluationResult, ExperimentResults  # noqa: E402
+from ragit.exceptions import (  # noqa: E402
+    ConfigurationError,
+    EvaluationError,
+    ExceptionAggregator,
+    GenerationError,
+    IndexingError,
+    ProviderError,
+    RagitError,
+    RetrievalError,
+)
 from ragit.loaders import (  # noqa: E402
     chunk_by_separator,
     chunk_document,
     chunk_rst_sections,
     chunk_text,
+    deduplicate_documents,
+    generate_document_id,
     load_directory,
     load_text,
 )
+from ragit.monitor import ExecutionMonitor  # noqa: E402
 from ragit.providers import (  # noqa: E402
     BaseEmbeddingProvider,
     BaseLLMProvider,
@@ -89,6 +98,8 @@ __all__ = [
     "chunk_document",
     "chunk_by_separator",
     "chunk_rst_sections",
+    "generate_document_id",
+    "deduplicate_documents",
     # Core classes
     "Document",
     "Chunk",
@@ -97,6 +108,17 @@ __all__ = [
     "FunctionProvider",
     "BaseLLMProvider",
     "BaseEmbeddingProvider",
+    # Exceptions
+    "RagitError",
+    "ConfigurationError",
+    "ProviderError",
+    "IndexingError",
+    "RetrievalError",
+    "GenerationError",
+    "EvaluationError",
+    "ExceptionAggregator",
+    # Monitoring
+    "ExecutionMonitor",
     # Optimization
     "RagitExperiment",
     "BenchmarkQuestion",
@@ -104,13 +126,3 @@ __all__ = [
     "EvaluationResult",
     "ExperimentResults",
 ]
-
-# Conditionally add SentenceTransformersProvider if available
-try:
-    from ragit.providers import (  # noqa: E402
-        SentenceTransformersProvider as SentenceTransformersProvider,
-    )
-
-    __all__ += ["SentenceTransformersProvider"]
-except ImportError:
-    pass

@@ -6,9 +6,8 @@
 Ragit Providers - LLM and Embedding providers for RAG optimization.
 
 Supported providers:
-- OllamaProvider: Connect to local or remote Ollama servers
+- OllamaProvider: Connect to local or remote Ollama servers (supports nomic-embed-text)
 - FunctionProvider: Wrap custom embedding/LLM functions
-- SentenceTransformersProvider: Offline embedding (requires ragit[transformers])
 
 Base classes for implementing custom providers:
 - BaseLLMProvider: Abstract base for LLM providers
@@ -34,14 +33,3 @@ __all__ = [
     "OllamaProvider",
     "FunctionProvider",
 ]
-
-# Conditionally export SentenceTransformersProvider if available
-try:
-    from ragit.providers.sentence_transformers import (
-        SentenceTransformersProvider as SentenceTransformersProvider,
-    )
-
-    __all__ += ["SentenceTransformersProvider"]
-except ImportError:
-    # sentence-transformers not installed, SentenceTransformersProvider not available
-    pass

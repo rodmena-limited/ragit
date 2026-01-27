@@ -39,7 +39,7 @@ ragit Documentation
 Key Features
 ------------
 
-- **Provider Agnostic**: Use any embedding API (OpenAI, Cohere, HuggingFace) or offline with SentenceTransformers
+- **Provider Agnostic**: Use any embedding API (OpenAI, Cohere, HuggingFace) or Ollama with nomic-embed-text
 - **RAG Hyperparameter Optimization**: Find optimal chunk size, overlap, and retrieval parameters
 - **High-Level API**: Simple ``RAGAssistant`` for document Q&A
 - **Document Loading**: Built-in utilities for loading and chunking documents
@@ -58,14 +58,14 @@ Quick Example
    assistant = RAGAssistant("docs/", embed_fn=my_embed)
    results = assistant.retrieve("How do I create a new user?")
 
-Or with offline embedding:
+Or with Ollama (nomic-embed-text):
 
 .. code-block:: python
 
    from ragit import RAGAssistant
-   from ragit.providers import SentenceTransformersProvider
+   from ragit.providers import OllamaProvider
 
-   assistant = RAGAssistant("docs/", provider=SentenceTransformersProvider())
+   assistant = RAGAssistant("docs/", provider=OllamaProvider())
    results = assistant.retrieve("How do I create a new user?")
 
 

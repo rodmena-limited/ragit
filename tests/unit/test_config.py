@@ -44,7 +44,7 @@ class TestConfig:
 
             with patch.dict(os.environ, clean_env, clear=True):
                 config_module = reload_config_module()
-                cfg = config_module.Config()
+                cfg = config_module.load_config()
 
                 # Check defaults
                 assert cfg.OLLAMA_BASE_URL == "http://localhost:11434"
@@ -69,7 +69,7 @@ class TestConfig:
 
         with patch.dict(os.environ, test_env, clear=True):
             config_module = reload_config_module()
-            cfg = config_module.Config()
+            cfg = config_module.load_config()
 
             assert cfg.OLLAMA_BASE_URL == "http://custom:8080"
             assert cfg.OLLAMA_API_KEY == "my-secret-key"
@@ -90,7 +90,7 @@ class TestConfig:
 
             with patch.dict(os.environ, test_env, clear=True):
                 config_module = reload_config_module()
-                cfg = config_module.Config()
+                cfg = config_module.load_config()
 
                 # Should fall back to base URL
                 assert cfg.OLLAMA_EMBEDDING_URL == "http://fallback:11434"
@@ -109,22 +109,20 @@ class TestConfig:
 
         with patch.dict(os.environ, test_env, clear=True):
             config_module = reload_config_module()
-            cfg = config_module.Config()
+            cfg = config_module.load_config()
 
             assert isinstance(cfg.OLLAMA_TIMEOUT, int)
             assert cfg.OLLAMA_TIMEOUT == 45
 
     def test_config_all_attributes_exist(self):
         """Test that all config attributes exist."""
-        from ragit.config import Config
+        from ragit.config import config
 
-        cfg = Config()
-
-        # All attributes should exist
-        assert hasattr(cfg, "OLLAMA_BASE_URL")
-        assert hasattr(cfg, "OLLAMA_API_KEY")
-        assert hasattr(cfg, "OLLAMA_TIMEOUT")
-        assert hasattr(cfg, "OLLAMA_EMBEDDING_URL")
-        assert hasattr(cfg, "DEFAULT_LLM_MODEL")
-        assert hasattr(cfg, "DEFAULT_EMBEDDING_MODEL")
-        assert hasattr(cfg, "LOG_LEVEL")
+        # All attributes should exist on the singleton
+        assert hasattr(config, "OLLAMA_BASE_URL")
+        assert hasattr(config, "OLLAMA_API_KEY")
+        assert hasattr(config, "OLLAMA_TIMEOUT")
+        assert hasattr(config, "OLLAMA_EMBEDDING_URL")
+        assert hasattr(config, "DEFAULT_LLM_MODEL")
+        assert hasattr(config, "DEFAULT_EMBEDDING_MODEL")
+        assert hasattr(config, "LOG_LEVEL")

@@ -14,14 +14,6 @@ Installing from PyPI
 
    pip install ragit
 
-For offline embedding (no external API required):
-
-.. code-block:: bash
-
-   pip install ragit[transformers]
-
-This installs sentence-transformers for local embedding. Models download automatically on first use (~90MB for default model).
-
 Installing from Source
 ----------------------
 
@@ -48,13 +40,13 @@ Verification
    import ragit
    print(ragit.__version__)
 
-   # Test with offline embedding
+   # Test with Ollama provider
    from ragit import RAGAssistant
-   from ragit.providers import SentenceTransformersProvider
+   from ragit.providers import OllamaProvider
 
    assistant = RAGAssistant(
        ".",  # Current directory
-       provider=SentenceTransformersProvider()
+       provider=OllamaProvider()
    )
    print(f"Loaded {assistant.num_chunks} chunks")
 

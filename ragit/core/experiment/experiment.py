@@ -45,12 +45,19 @@ class Document:
 
 @dataclass
 class Chunk:
-    """A document chunk."""
+    """A document chunk with optional rich metadata.
+
+    Metadata can include:
+    - document_id: SHA256 hash for deduplication and window search
+    - sequence_number: Order within the document
+    - chunk_start/chunk_end: Character positions in original text
+    """
 
     content: str
     doc_id: str
     chunk_index: int
     embedding: tuple[float, ...] | list[float] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

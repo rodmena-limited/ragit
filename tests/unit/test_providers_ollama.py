@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from ragit.exceptions import IndexingError, ProviderError
 from ragit.providers.ollama import OllamaProvider
 
 
@@ -200,7 +201,7 @@ class TestOllamaProviderListModels:
         mock_session.get.side_effect = RequestException("Failed")
         provider._session = mock_session
 
-        with pytest.raises(ConnectionError, match="Failed to list Ollama models"):
+        with pytest.raises(ProviderError, match="Failed to list Ollama models"):
             provider.list_models()
 
 
@@ -275,7 +276,7 @@ class TestOllamaProviderGenerate:
         mock_session.post.side_effect = RequestException("Failed")
         provider._session = mock_session
 
-        with pytest.raises(ConnectionError, match="Ollama generate failed"):
+        with pytest.raises(ProviderError, match="Ollama generate failed"):
             provider.generate(prompt="Hi", model="llama3")
 
 
@@ -373,7 +374,7 @@ class TestOllamaProviderEmbed:
         mock_session.post.side_effect = RequestException("Failed")
         provider._session = mock_session
 
-        with pytest.raises(ConnectionError, match="Ollama embed failed"):
+        with pytest.raises(IndexingError, match="Ollama embed failed"):
             provider.embed(text="Hello", model="model")
 
 
@@ -417,7 +418,7 @@ class TestOllamaProviderEmbedBatch:
         mock_session.post.side_effect = RequestException("Failed")
         provider._session = mock_session
 
-        with pytest.raises(ConnectionError, match="Ollama batch embed failed"):
+        with pytest.raises(IndexingError, match="Ollama batch embed failed"):
             provider.embed_batch(texts=["a", "b"], model="model")
 
     def test_embed_batch_single_api_call(self):
@@ -551,7 +552,7 @@ class TestOllamaProviderChat:
         mock_session.post.side_effect = RequestException("Failed")
         provider._session = mock_session
 
-        with pytest.raises(ConnectionError, match="Ollama chat failed"):
+        with pytest.raises(ProviderError, match="Ollama chat failed"):
             provider.chat(messages=[{"role": "user", "content": "Hi"}], model="llama3")
 
 

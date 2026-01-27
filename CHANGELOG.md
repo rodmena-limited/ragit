@@ -5,6 +5,150 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2025-01-27
+
+### Breaking Changes
+
+**Exception types have changed.** OllamaProvider now raises custom exceptions instead of `ConnectionError`.
+
+#### Migration Guide
+
+**Before (v0.9.x):**
+```python
+from ragit.providers import OllamaProvider
+
+provider = OllamaProvider()
+try:
+    response = provider.generate("prompt", "model")
+except ConnectionError as e:
+    print(f"Provider failed: {e}")
+
+try:
+    embedding = provider.embed("text", "model")
+except ConnectionError as e:
+    print(f"Embedding failed: {e}")
+```
+
+**After (v0.10.0):**
+```python
+from ragit.providers import OllamaProvider
+from ragit import ProviderError, IndexingError, RagitError
+
+provider = OllamaProvider()
+
+# Option 1: Catch specific exceptions
+try:
+    response = provider.generate("prompt", "model")
+except ProviderError as e:
+    print(f"Provider failed: {e}")
+    # Access original exception if needed
+    if e.original_exception:
+        print(f"Caused by: {e.original_exception}")
+
+try:
+    embedding = provider.embed("text", "model")
+except IndexingError as e:
+    print(f"Embedding failed: {e}")
+
+# Option 2: Catch all ragit exceptions
+try:
+    response = provider.generate("prompt", "model")
+except RagitError as e:
+    print(f"Ragit error: {e}")
+```
+
+**Exception mapping:**
+| Old Exception | New Exception | When Raised |
+|---------------|---------------|-------------|
+| `ConnectionError` | `ProviderError` | LLM generate/chat failures, list_models |
+| `ConnectionError` | `IndexingError` | Embedding failures (embed, embed_batch) |
+
+### Added
+
+- **Resilience features** via `resilient-circuit` library:
+  - Retry with exponential backoff (3 retries for generate, 2 for embed)
+  - Circuit breaker pattern for fault tolerance
+  - Per-operation timeouts (generate: 300s, embed: 30s, embed_batch: 120s)
+  - `use_resilience` parameter to enable/disable (default: True)
+  - `generate_circuit_status` and `embed_circuit_status` properties
+
+- **Custom exception hierarchy** (`ragit.exceptions`):
+  - `RagitError` - base exception for all ragit errors
+  - `ConfigurationError` - configuration validation failures
+  - `ProviderError` - provider communication failures
+  - `IndexingError` - embedding/indexing failures
+  - `RetrievalError` - retrieval operation failures
+  - `GenerationError` - LLM generation failures
+  - `EvaluationError` - evaluation/scoring failures
+  - `ExceptionAggregator` - collect errors during batch operations
+
+- **Structured logging** (`ragit.logging`):
+  - `setup_logging()` - configure ragit logging
+  - `log_operation()` - context manager with timing
+  - `log_method()` - decorator for method logging
+  - `LogContext` - request correlation tracking
+
+- **Execution monitoring** (`ragit.monitor`):
+  - `ExecutionMonitor` - track pattern/step execution times
+  - JSON export for analysis
+  - Step aggregates (count, total, avg, min, max)
+
+- **Window search / context expansion** on `RAGAssistant`:
+  - `retrieve_with_context(query, top_k, window_size)` - expand retrieval with adjacent chunks
+  - `get_context_with_window(query, top_k, window_size)` - merged context string
+  - `min_score` parameter for score threshold filtering
+
+- **Rich chunk metadata**:
+  - `generate_document_id(content)` - SHA256-based document ID
+  - `deduplicate_documents(docs)` - remove duplicates by content hash
+  - Chunks now include: `document_id`, `sequence_number`, `chunk_start`, `chunk_end`
+
+- **Pydantic configuration validation** (`ragit.config`):
+  - `RagitConfig` model with field validators
+  - URL format validation
+  - Timeout bounds checking (1-600 seconds)
+  - `ConfigValidationError` for invalid configuration
+
+### Changed
+
+- `OllamaProvider` now uses custom exceptions instead of `ConnectionError`
+- Configuration uses Pydantic validation (stricter validation at startup)
+- All chunking functions now include rich metadata by default
+- New dependency: `resilient-circuit>=0.4.7`
+
+### Fixed
+
+- **Cache truncation bug**: Text is now truncated BEFORE cache key lookup, ensuring consistent caching behavior for long texts
+
+## [0.9.0] - 2025-01-27
+
+### Breaking Changes
+
+**SentenceTransformersProvider has been removed.**
+
+The offline MiniLM/sentence-transformers embedding provider has been removed. Use OllamaProvider with `nomic-embed-text` for embeddings instead.
+
+#### Migration Guide
+
+**Before (v0.8.x):**
+```python
+from ragit.providers import SentenceTransformersProvider
+assistant = RAGAssistant("docs/", provider=SentenceTransformersProvider())
+```
+
+**After (v0.9.0):**
+```python
+from ragit.providers import OllamaProvider
+assistant = RAGAssistant("docs/", provider=OllamaProvider())
+# Uses nomic-embed-text (768d) for embeddings
+```
+
+### Removed
+
+- `SentenceTransformersProvider` - Use `OllamaProvider` with nomic-embed-text instead
+- `ragit[transformers]` optional dependency - No longer needed
+- `sentence-transformers` dependency
+
 ## [0.8.0] - 2025-01-17
 
 ### Breaking Changes

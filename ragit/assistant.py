@@ -19,6 +19,7 @@ from numpy.typing import NDArray
 
 from ragit.core.experiment.experiment import Chunk, Document
 from ragit.loaders import chunk_document, chunk_rst_sections, load_directory, load_text
+from ragit.logging import log_operation
 from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
 from ragit.providers.function_adapter import FunctionProvider
 
@@ -76,13 +77,9 @@ class RAGAssistant:
     >>> assistant = RAGAssistant(docs, embed_fn=my_embed, generate_fn=my_llm)
     >>> answer = assistant.ask("What is X?")
     >>>
-    >>> # With explicit provider
+    >>> # With Ollama provider (supports nomic-embed-text)
     >>> from ragit.providers import OllamaProvider
     >>> assistant = RAGAssistant(docs, provider=OllamaProvider())
-    >>>
-    >>> # With SentenceTransformers (offline)
-    >>> from ragit.providers import SentenceTransformersProvider
-    >>> assistant = RAGAssistant(docs, provider=SentenceTransformersProvider())
     """
 
     def __init__(
@@ -126,8 +123,7 @@ class RAGAssistant:
                 "Must provide embed_fn or provider for embeddings. "
                 "Examples:\n"
                 "  RAGAssistant(docs, embed_fn=my_embed_function)\n"
-                "  RAGAssistant(docs, provider=OllamaProvider())\n"
-                "  RAGAssistant(docs, provider=SentenceTransformersProvider())"
+                "  RAGAssistant(docs, provider=OllamaProvider())"
             )
 
         self.embedding_model = embedding_model or "default"
@@ -377,6 +373,190 @@ class RAGAssistant:
             top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
 
         return [(self._chunks[i], float(similarities[i])) for i in top_indices]
+
+    def retrieve_with_context(
+        self,
+        query: str,
+        top_k: int = 3,
+        window_size: int = 1,
+        min_score: float = 0.0,
+    ) -> list[tuple[Chunk, float]]:
+        """
+        Retrieve chunks with adjacent context expansion (window search).
+
+        For each retrieved chunk, also includes adjacent chunks from the
+        same document to provide more context. This is useful when relevant
+        information spans multiple chunks.
+
+        Pattern inspired by ai4rag window_search.
+
+        Parameters
+        ----------
+        query : str
+            Search query.
+        top_k : int
+            Number of initial chunks to retrieve (default: 3).
+        window_size : int
+            Number of adjacent chunks to include on each side (default: 1).
+            Set to 0 to disable window expansion.
+        min_score : float
+            Minimum similarity score threshold (default: 0.0).
+
+        Returns
+        -------
+        list[tuple[Chunk, float]]
+            List of (chunk, similarity_score) tuples, sorted by relevance.
+            Adjacent chunks have slightly lower scores.
+
+        Examples
+        --------
+        >>> # Get chunks with 1 adjacent chunk on each side
+        >>> results = assistant.retrieve_with_context("query", window_size=1)
+        >>> for chunk, score in results:
+        ...     print(f"{score:.2f}: {chunk.content[:50]}...")
+        """
+        with log_operation("retrieve_with_context", query_len=len(query), top_k=top_k, window_size=window_size) as ctx:
+            # Get initial results (more than top_k to account for filtering)
+            results = self.retrieve(query, top_k * 2)
+
+            # Apply minimum score threshold
+            if min_score > 0:
+                results = [(chunk, score) for chunk, score in results if score >= min_score]
+
+            if window_size == 0 or not results:
+                ctx["expanded_chunks"] = len(results)
+                return results[:top_k]
+
+            # Build chunk index for fast lookup
+            chunk_to_idx = {id(chunk): i for i, chunk in enumerate(self._chunks)}
+
+            expanded_results: list[tuple[Chunk, float]] = []
+            seen_indices: set[int] = set()
+
+            for chunk, score in results[:top_k]:
+                chunk_idx = chunk_to_idx.get(id(chunk))
+                if chunk_idx is None:
+                    expanded_results.append((chunk, score))
+                    continue
+
+                # Get window of adjacent chunks from same document
+                start_idx = max(0, chunk_idx - window_size)
+                end_idx = min(len(self._chunks), chunk_idx + window_size + 1)
+
+                for idx in range(start_idx, end_idx):
+                    if idx in seen_indices:
+                        continue
+
+                    adjacent_chunk = self._chunks[idx]
+                    # Only include adjacent chunks from same document
+                    if adjacent_chunk.doc_id == chunk.doc_id:
+                        seen_indices.add(idx)
+                        # Original chunk keeps full score, adjacent get 80%
+                        adj_score = score if idx == chunk_idx else score * 0.8
+                        expanded_results.append((adjacent_chunk, adj_score))
+
+            # Sort by score (highest first)
+            expanded_results.sort(key=lambda x: (-x[1], self._chunks.index(x[0]) if x[0] in self._chunks else 0))
+            ctx["expanded_chunks"] = len(expanded_results)
+
+            return expanded_results
+
+    def get_context_with_window(
+        self,
+        query: str,
+        top_k: int = 3,
+        window_size: int = 1,
+        min_score: float = 0.0,
+    ) -> str:
+        """
+        Get formatted context with adjacent chunk expansion.
+
+        Merges overlapping text from adjacent chunks intelligently.
+
+        Parameters
+        ----------
+        query : str
+            Search query.
+        top_k : int
+            Number of initial chunks to retrieve.
+        window_size : int
+            Number of adjacent chunks on each side.
+        min_score : float
+            Minimum similarity score threshold.
+
+        Returns
+        -------
+        str
+            Formatted context string with merged chunks.
+        """
+        results = self.retrieve_with_context(query, top_k, window_size, min_score)
+
+        if not results:
+            return ""
+
+        # Group chunks by document to merge properly
+        doc_chunks: dict[str, list[tuple[Chunk, float]]] = {}
+        for chunk, score in results:
+            doc_id = chunk.doc_id or "unknown"
+            if doc_id not in doc_chunks:
+                doc_chunks[doc_id] = []
+            doc_chunks[doc_id].append((chunk, score))
+
+        merged_sections: list[str] = []
+
+        for _doc_id, chunks in doc_chunks.items():
+            # Sort chunks by their position in the original list
+            chunks.sort(key=lambda x: self._chunks.index(x[0]) if x[0] in self._chunks else 0)
+
+            # Merge overlapping text
+            merged_content = []
+            for chunk, _ in chunks:
+                if merged_content:
+                    # Check for overlap with previous chunk
+                    prev_content = merged_content[-1]
+                    non_overlapping = self._get_non_overlapping_text(prev_content, chunk.content)
+                    if non_overlapping != chunk.content:
+                        # Found overlap, extend previous chunk
+                        merged_content[-1] = prev_content + non_overlapping
+                    else:
+                        # No overlap, add as new section
+                        merged_content.append(chunk.content)
+                else:
+                    merged_content.append(chunk.content)
+
+            merged_sections.append("\n".join(merged_content))
+
+        return "\n\n---\n\n".join(merged_sections)
+
+    def _get_non_overlapping_text(self, str1: str, str2: str) -> str:
+        """
+        Find non-overlapping portion of str2 when appending after str1.
+
+        Detects overlap where the end of str1 matches the beginning of str2,
+        and returns only the non-overlapping portion of str2.
+
+        Pattern from ai4rag vector_store/utils.py.
+
+        Parameters
+        ----------
+        str1 : str
+            First string (previous content).
+        str2 : str
+            Second string (content to potentially append).
+
+        Returns
+        -------
+        str
+            Non-overlapping portion of str2, or full str2 if no overlap.
+        """
+        # Limit overlap search to avoid O(n^2) for large strings
+        max_overlap = min(len(str1), len(str2), 200)
+
+        for i in range(max_overlap, 0, -1):
+            if str1[-i:] == str2[:i]:
+                return str2[i:]
+
+        return str2
 
     def get_context(self, query: str, top_k: int = 3) -> str:
         """

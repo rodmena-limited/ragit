@@ -12,15 +12,30 @@ Performance optimizations:
 - Connection pooling via requests.Session()
 - Async parallel embedding via trio + httpx
 - LRU cache for repeated embedding queries
+
+Resilience features (via resilient-circuit):
+- Retry with exponential backoff
+- Circuit breaker pattern for fault tolerance
 """
 
+from datetime import timedelta
+from fractions import Fraction
 from functools import lru_cache
 from typing import Any
 
 import httpx
 import requests
+from resilient_circuit import (
+    CircuitProtectorPolicy,
+    ExponentialDelay,
+    RetryWithBackoffPolicy,
+    SafetyNet,
+)
+from resilient_circuit.exceptions import ProtectedCallError, RetryLimitReached
 
 from ragit.config import config
+from ragit.exceptions import IndexingError, ProviderError
+from ragit.logging import log_operation, logger
 from ragit.providers.base import (
     BaseEmbeddingProvider,
     BaseLLMProvider,
@@ -29,14 +44,70 @@ from ragit.providers.base import (
 )
 
 
+def _create_generate_policy() -> SafetyNet:
+    """Create resilience policy for LLM generation (longer timeouts, more tolerant)."""
+    return SafetyNet(
+        policies=(
+            RetryWithBackoffPolicy(
+                max_retries=3,
+                backoff=ExponentialDelay(
+                    min_delay=timedelta(seconds=1),
+                    max_delay=timedelta(seconds=30),
+                    factor=2,
+                    jitter=0.1,
+                ),
+                should_handle=lambda e: isinstance(e, (ConnectionError, TimeoutError, requests.RequestException)),
+            ),
+            CircuitProtectorPolicy(
+                resource_key="ollama_generate",
+                cooldown=timedelta(seconds=60),
+                failure_limit=Fraction(3, 10),  # 30% failure rate trips circuit
+                success_limit=Fraction(4, 5),  # 80% success to close
+                should_handle=lambda e: isinstance(e, (ConnectionError, requests.RequestException)),
+            ),
+        )
+    )
+
+
+def _create_embed_policy() -> SafetyNet:
+    """Create resilience policy for embeddings (faster, stricter)."""
+    return SafetyNet(
+        policies=(
+            RetryWithBackoffPolicy(
+                max_retries=2,
+                backoff=ExponentialDelay(
+                    min_delay=timedelta(milliseconds=500),
+                    max_delay=timedelta(seconds=5),
+                    factor=2,
+                    jitter=0.1,
+                ),
+                should_handle=lambda e: isinstance(e, (ConnectionError, TimeoutError, requests.RequestException)),
+            ),
+            CircuitProtectorPolicy(
+                resource_key="ollama_embed",
+                cooldown=timedelta(seconds=30),
+                failure_limit=Fraction(2, 5),  # 40% failure rate trips circuit
+                success_limit=Fraction(3, 3),  # All 3 tests must succeed to close
+                should_handle=lambda e: isinstance(e, (ConnectionError, requests.RequestException)),
+            ),
+        )
+    )
+
+
+def _truncate_text(text: str, max_chars: int = 2000) -> str:
+    """Truncate text to max_chars. Used BEFORE cache lookup to fix cache key bug."""
+    return text[:max_chars] if len(text) > max_chars else text
+
+
 # Module-level cache for embeddings (shared across instances)
+# NOTE: Text must be truncated BEFORE calling this function to ensure correct cache keys
 @lru_cache(maxsize=2048)
 def _cached_embedding(text: str, model: str, embedding_url: str, timeout: int) -> tuple[float, ...]:
-    """Cache embedding results to avoid redundant API calls."""
-    # Truncate oversized inputs
-    if len(text) > OllamaProvider.MAX_EMBED_CHARS:
-        text = text[: OllamaProvider.MAX_EMBED_CHARS]
+    """Cache embedding results to avoid redundant API calls.
 
+    IMPORTANT: Caller must truncate text BEFORE calling this function.
+    This ensures cache keys are consistent for truncated inputs.
+    """
     response = requests.post(
         f"{embedding_url}/api/embed",
         headers={"Content-Type": "application/json"},
@@ -97,24 +168,51 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
     # Max characters per embedding request (safe limit for 512 token models)
     MAX_EMBED_CHARS = 2000
 
+    # Default timeouts per operation type (in seconds)
+    DEFAULT_TIMEOUTS: dict[str, int] = {
+        "generate": 300,  # 5 minutes for LLM generation
+        "chat": 300,  # 5 minutes for chat
+        "embed": 30,  # 30 seconds for single embedding
+        "embed_batch": 120,  # 2 minutes for batch embedding
+        "health": 5,  # 5 seconds for health check
+        "list_models": 10,  # 10 seconds for listing models
+    }
+
     def __init__(
         self,
         base_url: str | None = None,
         embedding_url: str | None = None,
         api_key: str | None = None,
         timeout: int | None = None,
+        timeouts: dict[str, int] | None = None,
         use_cache: bool = True,
+        use_resilience: bool = True,
     ) -> None:
         self.base_url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
         self.embedding_url = (embedding_url or config.OLLAMA_EMBEDDING_URL).rstrip("/")
         self.api_key = api_key or config.OLLAMA_API_KEY
-        self.timeout = timeout or config.OLLAMA_TIMEOUT
         self.use_cache = use_cache
+        self.use_resilience = use_resilience
         self._current_embed_model: str | None = None
         self._current_dimensions: int = 768  # default
 
+        # Per-operation timeouts (merge user overrides with defaults)
+        self._timeouts = {**self.DEFAULT_TIMEOUTS, **(timeouts or {})}
+        # Legacy single timeout parameter overrides all operations
+        if timeout is not None:
+            self._timeouts = {k: timeout for k in self._timeouts}
+        # Keep legacy timeout property for backwards compatibility
+        self.timeout = timeout or config.OLLAMA_TIMEOUT
+
         # Connection pooling via session
         self._session: requests.Session | None = None
+
+        # Resilience policies (retry + circuit breaker)
+        self._generate_policy: SafetyNet | None = None
+        self._embed_policy: SafetyNet | None = None
+        if use_resilience:
+            self._generate_policy = _create_generate_policy()
+            self._embed_policy = _create_embed_policy()
 
     @property
     def session(self) -> requests.Session:
@@ -156,7 +254,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         try:
             response = self.session.get(
                 f"{self.base_url}/api/tags",
-                timeout=5,
+                timeout=self._timeouts["health"],
             )
             return bool(response.status_code == 200)
         except requests.RequestException:
@@ -167,13 +265,13 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         try:
             response = self.session.get(
                 f"{self.base_url}/api/tags",
-                timeout=10,
+                timeout=self._timeouts["list_models"],
             )
             response.raise_for_status()
             data = response.json()
             return list(data.get("models", []))
         except requests.RequestException as e:
-            raise ConnectionError(f"Failed to list Ollama models: {e}") from e
+            raise ProviderError("Failed to list Ollama models", e) from e
 
     def generate(
         self,
@@ -183,7 +281,33 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> LLMResponse:
-        """Generate text using Ollama."""
+        """Generate text using Ollama with optional resilience (retry + circuit breaker)."""
+        if self.use_resilience and self._generate_policy is not None:
+
+            @self._generate_policy
+            def _protected_generate() -> LLMResponse:
+                return self._do_generate(prompt, model, system_prompt, temperature, max_tokens)
+
+            try:
+                return _protected_generate()
+            except ProtectedCallError as e:
+                logger.warning(f"Circuit breaker OPEN for ollama.generate (model={model})")
+                raise ProviderError("Ollama service unavailable - circuit breaker open", e) from e
+            except RetryLimitReached as e:
+                logger.error(f"Retry limit reached for ollama.generate (model={model}): {e.__cause__}")
+                raise ProviderError("Ollama generate failed after retries", e.__cause__) from e
+        else:
+            return self._do_generate(prompt, model, system_prompt, temperature, max_tokens)
+
+    def _do_generate(
+        self,
+        prompt: str,
+        model: str,
+        system_prompt: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> LLMResponse:
+        """Internal generate implementation (unprotected)."""
         options: dict[str, float | int] = {"temperature": temperature}
         if max_tokens:
             options["num_predict"] = max_tokens
@@ -198,105 +322,159 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         if system_prompt:
             payload["system"] = system_prompt
 
-        try:
-            response = self.session.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            return LLMResponse(
-                text=data.get("response", ""),
-                model=model,
-                provider=self.provider_name,
-                usage={
-                    "prompt_tokens": data.get("prompt_eval_count"),
-                    "completion_tokens": data.get("eval_count"),
-                    "total_duration": data.get("total_duration"),
-                },
-            )
-        except requests.RequestException as e:
-            raise ConnectionError(f"Ollama generate failed: {e}") from e
-
-    def embed(self, text: str, model: str) -> EmbeddingResponse:
-        """Generate embedding using Ollama with optional caching."""
-        self._current_embed_model = model
-        self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
-
-        try:
-            if self.use_cache:
-                # Use cached version
-                embedding = _cached_embedding(text, model, self.embedding_url, self.timeout)
-            else:
-                # Direct call without cache
-                truncated = text[: self.MAX_EMBED_CHARS] if len(text) > self.MAX_EMBED_CHARS else text
+        with log_operation("ollama.generate", model=model, prompt_len=len(prompt)) as ctx:
+            try:
                 response = self.session.post(
-                    f"{self.embedding_url}/api/embed",
-                    json={"model": model, "input": truncated},
-                    timeout=self.timeout,
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=self._timeouts["generate"],
                 )
                 response.raise_for_status()
                 data = response.json()
-                embeddings = data.get("embeddings", [])
-                if not embeddings or not embeddings[0]:
-                    raise ValueError("Empty embedding returned from Ollama")
-                embedding = tuple(embeddings[0])
 
-            # Update dimensions from actual response
-            self._current_dimensions = len(embedding)
+                ctx["completion_tokens"] = data.get("eval_count")
 
-            return EmbeddingResponse(
-                embedding=embedding,
-                model=model,
-                provider=self.provider_name,
-                dimensions=len(embedding),
-            )
-        except requests.RequestException as e:
-            raise ConnectionError(f"Ollama embed failed: {e}") from e
+                return LLMResponse(
+                    text=data.get("response", ""),
+                    model=model,
+                    provider=self.provider_name,
+                    usage={
+                        "prompt_tokens": data.get("prompt_eval_count"),
+                        "completion_tokens": data.get("eval_count"),
+                        "total_duration": data.get("total_duration"),
+                    },
+                )
+            except requests.RequestException as e:
+                raise ProviderError("Ollama generate failed", e) from e
+
+    def embed(self, text: str, model: str) -> EmbeddingResponse:
+        """Generate embedding using Ollama with optional caching and resilience."""
+        if self.use_resilience and self._embed_policy is not None:
+
+            @self._embed_policy
+            def _protected_embed() -> EmbeddingResponse:
+                return self._do_embed(text, model)
+
+            try:
+                return _protected_embed()
+            except ProtectedCallError as e:
+                logger.warning(f"Circuit breaker OPEN for ollama.embed (model={model})")
+                raise ProviderError("Ollama embedding service unavailable - circuit breaker open", e) from e
+            except RetryLimitReached as e:
+                logger.error(f"Retry limit reached for ollama.embed (model={model}): {e.__cause__}")
+                raise IndexingError("Ollama embed failed after retries", e.__cause__) from e
+        else:
+            return self._do_embed(text, model)
+
+    def _do_embed(self, text: str, model: str) -> EmbeddingResponse:
+        """Internal embed implementation (unprotected)."""
+        self._current_embed_model = model
+        self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
+
+        # Truncate BEFORE cache lookup (fixes cache key bug)
+        truncated_text = _truncate_text(text, self.MAX_EMBED_CHARS)
+        was_truncated = len(text) > self.MAX_EMBED_CHARS
+
+        with log_operation("ollama.embed", model=model, text_len=len(text), truncated=was_truncated) as ctx:
+            try:
+                if self.use_cache:
+                    # Use cached version with truncated text
+                    embedding = _cached_embedding(truncated_text, model, self.embedding_url, self._timeouts["embed"])
+                    ctx["cache"] = "hit_or_miss"  # Can't tell from here
+                else:
+                    # Direct call without cache
+                    response = self.session.post(
+                        f"{self.embedding_url}/api/embed",
+                        json={"model": model, "input": truncated_text},
+                        timeout=self._timeouts["embed"],
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    embeddings = data.get("embeddings", [])
+                    if not embeddings or not embeddings[0]:
+                        raise ValueError("Empty embedding returned from Ollama")
+                    embedding = tuple(embeddings[0])
+                    ctx["cache"] = "disabled"
+
+                # Update dimensions from actual response
+                self._current_dimensions = len(embedding)
+                ctx["dimensions"] = len(embedding)
+
+                return EmbeddingResponse(
+                    embedding=embedding,
+                    model=model,
+                    provider=self.provider_name,
+                    dimensions=len(embedding),
+                )
+            except requests.RequestException as e:
+                raise IndexingError("Ollama embed failed", e) from e
 
     def embed_batch(self, texts: list[str], model: str) -> list[EmbeddingResponse]:
-        """Generate embeddings for multiple texts in a single API call.
+        """Generate embeddings for multiple texts in a single API call with resilience.
 
         The /api/embed endpoint supports batch inputs natively.
         """
+        if self.use_resilience and self._embed_policy is not None:
+
+            @self._embed_policy
+            def _protected_embed_batch() -> list[EmbeddingResponse]:
+                return self._do_embed_batch(texts, model)
+
+            try:
+                return _protected_embed_batch()
+            except ProtectedCallError as e:
+                logger.warning(f"Circuit breaker OPEN for ollama.embed_batch (model={model}, batch_size={len(texts)})")
+                raise ProviderError("Ollama embedding service unavailable - circuit breaker open", e) from e
+            except RetryLimitReached as e:
+                logger.error(f"Retry limit reached for ollama.embed_batch (model={model}): {e.__cause__}")
+                raise IndexingError("Ollama batch embed failed after retries", e.__cause__) from e
+        else:
+            return self._do_embed_batch(texts, model)
+
+    def _do_embed_batch(self, texts: list[str], model: str) -> list[EmbeddingResponse]:
+        """Internal batch embed implementation (unprotected)."""
         self._current_embed_model = model
         self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
 
         # Truncate oversized inputs
-        truncated_texts = [text[: self.MAX_EMBED_CHARS] if len(text) > self.MAX_EMBED_CHARS else text for text in texts]
+        truncated_texts = [_truncate_text(text, self.MAX_EMBED_CHARS) for text in texts]
+        truncated_count = sum(1 for t, tt in zip(texts, truncated_texts, strict=True) if len(t) != len(tt))
 
-        try:
-            response = self.session.post(
-                f"{self.embedding_url}/api/embed",
-                json={"model": model, "input": truncated_texts},
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
-            embeddings_list = data.get("embeddings", [])
-
-            if not embeddings_list:
-                raise ValueError("Empty embeddings returned from Ollama")
-
-            results = []
-            for embedding_data in embeddings_list:
-                embedding = tuple(embedding_data) if embedding_data else ()
-                if embedding:
-                    self._current_dimensions = len(embedding)
-
-                results.append(
-                    EmbeddingResponse(
-                        embedding=embedding,
-                        model=model,
-                        provider=self.provider_name,
-                        dimensions=len(embedding),
-                    )
+        with log_operation(
+            "ollama.embed_batch", model=model, batch_size=len(texts), truncated_count=truncated_count
+        ) as ctx:
+            try:
+                response = self.session.post(
+                    f"{self.embedding_url}/api/embed",
+                    json={"model": model, "input": truncated_texts},
+                    timeout=self._timeouts["embed_batch"],
                 )
-            return results
-        except requests.RequestException as e:
-            raise ConnectionError(f"Ollama batch embed failed: {e}") from e
+                response.raise_for_status()
+                data = response.json()
+                embeddings_list = data.get("embeddings", [])
+
+                if not embeddings_list:
+                    raise ValueError("Empty embeddings returned from Ollama")
+
+                results = []
+                for embedding_data in embeddings_list:
+                    embedding = tuple(embedding_data) if embedding_data else ()
+                    if embedding:
+                        self._current_dimensions = len(embedding)
+
+                    results.append(
+                        EmbeddingResponse(
+                            embedding=embedding,
+                            model=model,
+                            provider=self.provider_name,
+                            dimensions=len(embedding),
+                        )
+                    )
+
+                ctx["dimensions"] = self._current_dimensions
+                return results
+            except requests.RequestException as e:
+                raise IndexingError("Ollama batch embed failed", e) from e
 
     async def embed_batch_async(
         self,
@@ -340,7 +518,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
                 response = await client.post(
                     f"{self.embedding_url}/api/embed",
                     json={"model": model, "input": truncated_texts},
-                    timeout=self.timeout,
+                    timeout=self._timeouts["embed_batch"],
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -365,7 +543,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
                 )
             return results
         except httpx.HTTPError as e:
-            raise ConnectionError(f"Ollama async batch embed failed: {e}") from e
+            raise IndexingError("Ollama async batch embed failed", e) from e
 
     def chat(
         self,
@@ -375,7 +553,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         max_tokens: int | None = None,
     ) -> LLMResponse:
         """
-        Chat completion using Ollama.
+        Chat completion using Ollama with optional resilience.
 
         Parameters
         ----------
@@ -393,6 +571,31 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         LLMResponse
             The generated response.
         """
+        if self.use_resilience and self._generate_policy is not None:
+
+            @self._generate_policy
+            def _protected_chat() -> LLMResponse:
+                return self._do_chat(messages, model, temperature, max_tokens)
+
+            try:
+                return _protected_chat()
+            except ProtectedCallError as e:
+                logger.warning(f"Circuit breaker OPEN for ollama.chat (model={model})")
+                raise ProviderError("Ollama service unavailable - circuit breaker open", e) from e
+            except RetryLimitReached as e:
+                logger.error(f"Retry limit reached for ollama.chat (model={model}): {e.__cause__}")
+                raise ProviderError("Ollama chat failed after retries", e.__cause__) from e
+        else:
+            return self._do_chat(messages, model, temperature, max_tokens)
+
+    def _do_chat(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> LLMResponse:
+        """Internal chat implementation (unprotected)."""
         options: dict[str, float | int] = {"temperature": temperature}
         if max_tokens:
             options["num_predict"] = max_tokens
@@ -404,26 +607,47 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             "options": options,
         }
 
-        try:
-            response = self.session.post(
-                f"{self.base_url}/api/chat",
-                json=payload,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
+        with log_operation("ollama.chat", model=model, message_count=len(messages)) as ctx:
+            try:
+                response = self.session.post(
+                    f"{self.base_url}/api/chat",
+                    json=payload,
+                    timeout=self._timeouts["chat"],
+                )
+                response.raise_for_status()
+                data = response.json()
 
-            return LLMResponse(
-                text=data.get("message", {}).get("content", ""),
-                model=model,
-                provider=self.provider_name,
-                usage={
-                    "prompt_tokens": data.get("prompt_eval_count"),
-                    "completion_tokens": data.get("eval_count"),
-                },
-            )
-        except requests.RequestException as e:
-            raise ConnectionError(f"Ollama chat failed: {e}") from e
+                ctx["completion_tokens"] = data.get("eval_count")
+
+                return LLMResponse(
+                    text=data.get("message", {}).get("content", ""),
+                    model=model,
+                    provider=self.provider_name,
+                    usage={
+                        "prompt_tokens": data.get("prompt_eval_count"),
+                        "completion_tokens": data.get("eval_count"),
+                    },
+                )
+            except requests.RequestException as e:
+                raise ProviderError("Ollama chat failed", e) from e
+
+    # Circuit breaker status monitoring
+    @property
+    def generate_circuit_status(self) -> str:
+        """Get generate circuit breaker status (CLOSED, OPEN, HALF_OPEN, or 'disabled')."""
+        if not self.use_resilience or self._generate_policy is None:
+            return "disabled"
+        # Access the circuit protector (second policy in SafetyNet)
+        circuit = self._generate_policy._policies[1]
+        return circuit.status.name
+
+    @property
+    def embed_circuit_status(self) -> str:
+        """Get embed circuit breaker status (CLOSED, OPEN, HALF_OPEN, or 'disabled')."""
+        if not self.use_resilience or self._embed_policy is None:
+            return "disabled"
+        circuit = self._embed_policy._policies[1]
+        return circuit.status.name
 
     @staticmethod
     def clear_embedding_cache() -> None:

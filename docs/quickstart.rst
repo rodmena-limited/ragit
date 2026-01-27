@@ -10,9 +10,6 @@ Installation
 
    pip install ragit
 
-   # For offline embedding (no API required)
-   pip install ragit[transformers]
-
 Your First RAG Assistant
 ------------------------
 
@@ -31,22 +28,18 @@ You must provide an embedding source. Here are three options:
    assistant = RAGAssistant("docs/", embed_fn=my_embed)
    results = assistant.retrieve("search query")
 
-**Option 2: Offline with SentenceTransformers**
-
-Models download automatically on first use (~90MB for default model).
+**Option 2: With Ollama (nomic-embed-text)**
 
 .. code-block:: python
 
    from ragit import RAGAssistant
-   from ragit.providers import SentenceTransformersProvider
+   from ragit.providers import OllamaProvider
 
    assistant = RAGAssistant(
        "docs/",
-       provider=SentenceTransformersProvider()  # Uses all-MiniLM-L6-v2
+       provider=OllamaProvider()  # Uses nomic-embed-text (768d)
    )
    results = assistant.retrieve("search query")
-
-Available models: ``all-MiniLM-L6-v2`` (384d), ``all-mpnet-base-v2`` (768d)
 
 **Option 3: With LLM for Q&A**
 

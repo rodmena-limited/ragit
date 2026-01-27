@@ -6,12 +6,76 @@
 Document loading and chunking utilities.
 
 Provides simple functions to load documents from files and chunk text.
+
+Includes ai4rag-inspired patterns:
+- Auto-generated document IDs via SHA256 hash
+- Sequence numbering for chunk ordering
+- Deduplication via content hashing
 """
 
+import hashlib
 import re
 from pathlib import Path
 
 from ragit.core.experiment.experiment import Chunk, Document
+
+
+def generate_document_id(content: str) -> str:
+    """
+    Generate a unique document ID from content using SHA256 hash.
+
+    Pattern from ai4rag langchain_chunker.py.
+
+    Parameters
+    ----------
+    content : str
+        Document content to hash.
+
+    Returns
+    -------
+    str
+        16-character hex string (first 64 bits of SHA256).
+
+    Examples
+    --------
+    >>> doc_id = generate_document_id("Hello, world!")
+    >>> len(doc_id)
+    16
+    """
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+
+def deduplicate_documents(documents: list[Document]) -> list[Document]:
+    """
+    Remove duplicate documents based on content hash.
+
+    Pattern from ai4rag chroma.py.
+
+    Parameters
+    ----------
+    documents : list[Document]
+        Documents to deduplicate.
+
+    Returns
+    -------
+    list[Document]
+        Unique documents (first occurrence kept).
+
+    Examples
+    --------
+    >>> unique_docs = deduplicate_documents(docs)
+    >>> print(f"Removed {len(docs) - len(unique_docs)} duplicates")
+    """
+    seen_hashes: set[str] = set()
+    unique_docs: list[Document] = []
+
+    for doc in documents:
+        content_hash = generate_document_id(doc.content)
+        if content_hash not in seen_hashes:
+            seen_hashes.add(content_hash)
+            unique_docs.append(doc)
+
+    return unique_docs
 
 
 def load_text(path: str | Path) -> Document:
@@ -72,9 +136,20 @@ def load_directory(path: str | Path, pattern: str = "*.txt", recursive: bool = F
     return documents
 
 
-def chunk_text(text: str, chunk_size: int = 512, chunk_overlap: int = 50, doc_id: str = "doc") -> list[Chunk]:
+def chunk_text(
+    text: str,
+    chunk_size: int = 512,
+    chunk_overlap: int = 50,
+    doc_id: str | None = None,
+    include_metadata: bool = True,
+) -> list[Chunk]:
     """
-    Split text into overlapping chunks.
+    Split text into overlapping chunks with rich metadata.
+
+    Includes ai4rag-inspired metadata:
+    - document_id: SHA256 hash for deduplication and window search
+    - sequence_number: Order within the document
+    - chunk_start/chunk_end: Character positions in original text
 
     Parameters
     ----------
@@ -84,32 +159,55 @@ def chunk_text(text: str, chunk_size: int = 512, chunk_overlap: int = 50, doc_id
         Maximum characters per chunk (default: 512).
     chunk_overlap : int
         Overlap between chunks (default: 50).
-    doc_id : str
-        Document ID for the chunks (default: "doc").
+    doc_id : str, optional
+        Document ID for the chunks. If None, generates from content hash.
+    include_metadata : bool
+        Include rich metadata in chunks (default: True).
 
     Returns
     -------
     list[Chunk]
-        List of text chunks.
+        List of text chunks with metadata.
 
     Examples
     --------
-    >>> chunks = chunk_text("Long document...", chunk_size=256, chunk_overlap=50)
+    >>> chunks = chunk_text("Long document...", chunk_size=256)
+    >>> print(chunks[0].metadata)
+    {'document_id': 'a1b2c3...', 'sequence_number': 0, 'chunk_start': 0, 'chunk_end': 256}
     """
     if chunk_overlap >= chunk_size:
         raise ValueError("chunk_overlap must be less than chunk_size")
 
+    # Generate document ID if not provided
+    effective_doc_id = doc_id or generate_document_id(text)
+
     chunks = []
     start = 0
-    chunk_idx = 0
+    sequence_number = 0
 
     while start < len(text):
-        end = start + chunk_size
-        chunk_text = text[start:end].strip()
+        end = min(start + chunk_size, len(text))
+        chunk_content = text[start:end].strip()
 
-        if chunk_text:
-            chunks.append(Chunk(content=chunk_text, doc_id=doc_id, chunk_index=chunk_idx))
-            chunk_idx += 1
+        if chunk_content:
+            metadata = {}
+            if include_metadata:
+                metadata = {
+                    "document_id": effective_doc_id,
+                    "sequence_number": sequence_number,
+                    "chunk_start": start,
+                    "chunk_end": end,
+                }
+
+            chunks.append(
+                Chunk(
+                    content=chunk_content,
+                    doc_id=effective_doc_id,
+                    chunk_index=sequence_number,
+                    metadata=metadata,
+                )
+            )
+            sequence_number += 1
 
         start = end - chunk_overlap
         if start >= len(text) - chunk_overlap:
@@ -118,9 +216,14 @@ def chunk_text(text: str, chunk_size: int = 512, chunk_overlap: int = 50, doc_id
     return chunks
 
 
-def chunk_document(doc: Document, chunk_size: int = 512, chunk_overlap: int = 50) -> list[Chunk]:
+def chunk_document(
+    doc: Document,
+    chunk_size: int = 512,
+    chunk_overlap: int = 50,
+    include_metadata: bool = True,
+) -> list[Chunk]:
     """
-    Split a Document into overlapping chunks.
+    Split a Document into overlapping chunks with rich metadata.
 
     Parameters
     ----------
@@ -130,16 +233,30 @@ def chunk_document(doc: Document, chunk_size: int = 512, chunk_overlap: int = 50
         Maximum characters per chunk.
     chunk_overlap : int
         Overlap between chunks.
+    include_metadata : bool
+        Include rich metadata in chunks (default: True).
 
     Returns
     -------
     list[Chunk]
-        List of chunks from the document.
+        List of chunks from the document with metadata.
     """
-    return chunk_text(doc.content, chunk_size, chunk_overlap, doc.id)
+    chunks = chunk_text(doc.content, chunk_size, chunk_overlap, doc.id, include_metadata)
+
+    # Merge document metadata into chunk metadata
+    if doc.metadata and include_metadata:
+        for chunk in chunks:
+            chunk.metadata = {**doc.metadata, **chunk.metadata}
+
+    return chunks
 
 
-def chunk_by_separator(text: str, separator: str = "\n\n", doc_id: str = "doc") -> list[Chunk]:
+def chunk_by_separator(
+    text: str,
+    separator: str = "\n\n",
+    doc_id: str | None = None,
+    include_metadata: bool = True,
+) -> list[Chunk]:
     """
     Split text by a separator (e.g., paragraphs, sections).
 
@@ -149,45 +266,77 @@ def chunk_by_separator(text: str, separator: str = "\n\n", doc_id: str = "doc") 
         Text to split.
     separator : str
         Separator string (default: double newline for paragraphs).
-    doc_id : str
-        Document ID for the chunks.
+    doc_id : str, optional
+        Document ID for the chunks. If None, generates from content hash.
+    include_metadata : bool
+        Include rich metadata in chunks (default: True).
 
     Returns
     -------
     list[Chunk]
-        List of chunks.
+        List of chunks with metadata.
 
     Examples
     --------
     >>> chunks = chunk_by_separator(text, separator="\\n---\\n")
     """
+    effective_doc_id = doc_id or generate_document_id(text)
     parts = text.split(separator)
     chunks = []
+    current_pos = 0
 
-    for idx, part in enumerate(parts):
+    for _idx, part in enumerate(parts):
         content = part.strip()
         if content:
-            chunks.append(Chunk(content=content, doc_id=doc_id, chunk_index=idx))
+            metadata = {}
+            if include_metadata:
+                # Find actual position in original text
+                part_start = text.find(part, current_pos)
+                part_end = part_start + len(part) if part_start >= 0 else current_pos + len(part)
+                metadata = {
+                    "document_id": effective_doc_id,
+                    "sequence_number": len(chunks),
+                    "chunk_start": part_start if part_start >= 0 else current_pos,
+                    "chunk_end": part_end,
+                }
+                current_pos = part_end
+
+            chunks.append(
+                Chunk(
+                    content=content,
+                    doc_id=effective_doc_id,
+                    chunk_index=len(chunks),
+                    metadata=metadata,
+                )
+            )
 
     return chunks
 
 
-def chunk_rst_sections(text: str, doc_id: str = "doc") -> list[Chunk]:
+def chunk_rst_sections(
+    text: str,
+    doc_id: str | None = None,
+    include_metadata: bool = True,
+) -> list[Chunk]:
     """
-    Split RST document by section headers.
+    Split RST document by section headers with rich metadata.
 
     Parameters
     ----------
     text : str
         RST document text.
-    doc_id : str
-        Document ID for the chunks.
+    doc_id : str, optional
+        Document ID for the chunks. If None, generates from content hash.
+    include_metadata : bool
+        Include rich metadata in chunks (default: True).
 
     Returns
     -------
     list[Chunk]
-        List of section chunks.
+        List of section chunks with metadata.
     """
+    effective_doc_id = doc_id or generate_document_id(text)
+
     # Match RST section headers (title followed by underline of =, -, ~, etc.)
     pattern = r"\n([^\n]+)\n([=\-~`\'\"^_*+#]+)\n"
 
@@ -196,7 +345,17 @@ def chunk_rst_sections(text: str, doc_id: str = "doc") -> list[Chunk]:
 
     if not matches:
         # No sections found, return whole text as one chunk
-        return [Chunk(content=text.strip(), doc_id=doc_id, chunk_index=0)] if text.strip() else []
+        if text.strip():
+            metadata = {}
+            if include_metadata:
+                metadata = {
+                    "document_id": effective_doc_id,
+                    "sequence_number": 0,
+                    "chunk_start": 0,
+                    "chunk_end": len(text),
+                }
+            return [Chunk(content=text.strip(), doc_id=effective_doc_id, chunk_index=0, metadata=metadata)]
+        return []
 
     chunks = []
 
@@ -205,7 +364,15 @@ def chunk_rst_sections(text: str, doc_id: str = "doc") -> list[Chunk]:
     if first_pos > 0:
         pre_content = text[:first_pos].strip()
         if pre_content:
-            chunks.append(Chunk(content=pre_content, doc_id=doc_id, chunk_index=0))
+            metadata = {}
+            if include_metadata:
+                metadata = {
+                    "document_id": effective_doc_id,
+                    "sequence_number": 0,
+                    "chunk_start": 0,
+                    "chunk_end": first_pos,
+                }
+            chunks.append(Chunk(content=pre_content, doc_id=effective_doc_id, chunk_index=0, metadata=metadata))
 
     # Extract each section
     for i, match in enumerate(matches):
@@ -214,6 +381,21 @@ def chunk_rst_sections(text: str, doc_id: str = "doc") -> list[Chunk]:
 
         section_content = text[start:end].strip()
         if section_content:
-            chunks.append(Chunk(content=section_content, doc_id=doc_id, chunk_index=len(chunks)))
+            metadata = {}
+            if include_metadata:
+                metadata = {
+                    "document_id": effective_doc_id,
+                    "sequence_number": len(chunks),
+                    "chunk_start": start,
+                    "chunk_end": end,
+                }
+            chunks.append(
+                Chunk(
+                    content=section_content,
+                    doc_id=effective_doc_id,
+                    chunk_index=len(chunks),
+                    metadata=metadata,
+                )
+            )
 
     return chunks

@@ -6,14 +6,11 @@ RAG toolkit for Python. Document loading, chunking, vector search, LLM integrati
 
 ```bash
 pip install ragit
-
-# For offline embedding
-pip install ragit[transformers]
 ```
 
 ## Quick Start
 
-You must provide an embedding source: custom function, SentenceTransformers, or any provider.
+You must provide an embedding source: custom function, Ollama, or any provider.
 
 ### Custom Embedding Function
 
@@ -41,25 +38,16 @@ assistant = RAGAssistant("docs/", embed_fn=my_embed, generate_fn=my_generate)
 answer = assistant.ask("How does authentication work?")
 ```
 
-### Offline Embedding (SentenceTransformers)
-
-Models are downloaded automatically on first use (~90MB for default model).
+### With Ollama (nomic-embed-text)
 
 ```python
 from ragit import RAGAssistant
-from ragit.providers import SentenceTransformersProvider
+from ragit.providers import OllamaProvider
 
-# Uses all-MiniLM-L6-v2 by default
-assistant = RAGAssistant("docs/", provider=SentenceTransformersProvider())
-
-# Or specify a model
-assistant = RAGAssistant(
-    "docs/",
-    provider=SentenceTransformersProvider(model_name="all-mpnet-base-v2")
-)
+# Uses nomic-embed-text for embeddings (768d)
+assistant = RAGAssistant("docs/", provider=OllamaProvider())
+results = assistant.retrieve("search query")
 ```
-
-Available models: `all-MiniLM-L6-v2` (384d), `all-mpnet-base-v2` (768d), `paraphrase-MiniLM-L6-v2` (384d)
 
 ## Core API
 
