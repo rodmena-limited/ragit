@@ -153,16 +153,15 @@ def _safe_get_env(key: str, default: str | None = None) -> str | None:
     return value
 
 
-def _safe_get_int_env(key: str, default: int) -> int | str:
-    """Get environment variable as int, returning raw string if invalid."""
+def _safe_get_int_env(key: str, default: int) -> int:
+    """Get environment variable as int, raising on invalid values."""
     value = os.getenv(key)
     if value is None:
         return default
     try:
         return int(value)
     except ValueError:
-        # Return the raw string so Pydantic can give a better error message
-        return value
+        raise ConfigValidationError(f"Invalid integer value for {key}: {value!r}") from None
 
 
 def load_config() -> RagitConfig:

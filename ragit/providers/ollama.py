@@ -10,7 +10,7 @@ Configuration is loaded from environment variables.
 
 Performance optimizations:
 - Connection pooling via requests.Session()
-- Async parallel embedding via trio + httpx
+- Async parallel embedding via httpx
 - LRU cache for repeated embedding queries
 
 Resilience features (via resilient-circuit):
@@ -216,22 +216,42 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
 
     @property
     def session(self) -> requests.Session:
-        """Lazy-initialized session for connection pooling."""
+        """Lazy-initialized session for connection pooling.
+
+        Note: API key is NOT stored in session headers to prevent
+        potential exposure in logs or error messages. Authentication
+        is handled per-request via _get_headers().
+        """
         if self._session is None:
             self._session = requests.Session()
             self._session.headers.update({"Content-Type": "application/json"})
-            if self.api_key:
-                self._session.headers.update({"Authorization": f"Bearer {self.api_key}"})
+            # Security: API key is injected per-request via _get_headers()
+            # rather than stored in session headers to prevent log exposure
         return self._session
 
     def close(self) -> None:
         """Close the session and release resources."""
-        if self._session is not None:
-            self._session.close()
+        session = getattr(self, "_session", None)
+        if session is not None:
+            session.close()
             self._session = None
 
+    def __enter__(self) -> "OllamaProvider":
+        """Context manager entry - returns self for use in 'with' statements.
+
+        Example:
+            with OllamaProvider() as provider:
+                result = provider.generate("Hello", model="llama3")
+            # Session automatically closed here
+        """
+        return self
+
+    def __exit__(self, exc_type: type | None, exc_val: Exception | None, exc_tb: object) -> None:
+        """Context manager exit - ensures cleanup regardless of exceptions."""
+        self.close()
+
     def __del__(self) -> None:
-        """Cleanup on garbage collection."""
+        """Cleanup on garbage collection (fallback, prefer context manager)."""
         self.close()
 
     def _get_headers(self, include_auth: bool = True) -> dict[str, str]:
@@ -254,6 +274,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         try:
             response = self.session.get(
                 f"{self.base_url}/api/tags",
+                headers=self._get_headers(),
                 timeout=self._timeouts["health"],
             )
             return bool(response.status_code == 200)
@@ -265,6 +286,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         try:
             response = self.session.get(
                 f"{self.base_url}/api/tags",
+                headers=self._get_headers(),
                 timeout=self._timeouts["list_models"],
             )
             response.raise_for_status()
@@ -326,6 +348,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             try:
                 response = self.session.post(
                     f"{self.base_url}/api/generate",
+                    headers=self._get_headers(),
                     json=payload,
                     timeout=self._timeouts["generate"],
                 )
@@ -385,6 +408,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
                     # Direct call without cache
                     response = self.session.post(
                         f"{self.embedding_url}/api/embed",
+                        headers=self._get_headers(),
                         json={"model": model, "input": truncated_text},
                         timeout=self._timeouts["embed"],
                     )
@@ -446,6 +470,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             try:
                 response = self.session.post(
                     f"{self.embedding_url}/api/embed",
+                    headers=self._get_headers(),
                     json={"model": model, "input": truncated_texts},
                     timeout=self._timeouts["embed_batch"],
                 )
@@ -504,8 +529,8 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
 
         Examples
         --------
-        >>> import trio
-        >>> embeddings = trio.run(provider.embed_batch_async, texts, "mxbai-embed-large")
+        >>> import asyncio
+        >>> embeddings = asyncio.run(provider.embed_batch_async(texts, "mxbai-embed-large"))
         """
         self._current_embed_model = model
         self._current_dimensions = self.EMBEDDING_DIMENSIONS.get(model, 768)
@@ -611,6 +636,7 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
             try:
                 response = self.session.post(
                     f"{self.base_url}/api/chat",
+                    headers=self._get_headers(),
                     json=payload,
                     timeout=self._timeouts["chat"],
                 )
@@ -638,16 +664,24 @@ class OllamaProvider(BaseLLMProvider, BaseEmbeddingProvider):
         if not self.use_resilience or self._generate_policy is None:
             return "disabled"
         # Access the circuit protector (second policy in SafetyNet)
-        circuit = self._generate_policy._policies[1]
-        return circuit.status.name
+        policies = getattr(self._generate_policy, "policies", None)
+        if policies is None or len(policies) < 2:
+            return "unknown"
+        circuit = policies[1]
+        status = getattr(circuit, "status", None)
+        return str(getattr(status, "name", "unknown"))
 
     @property
     def embed_circuit_status(self) -> str:
         """Get embed circuit breaker status (CLOSED, OPEN, HALF_OPEN, or 'disabled')."""
         if not self.use_resilience or self._embed_policy is None:
             return "disabled"
-        circuit = self._embed_policy._policies[1]
-        return circuit.status.name
+        policies = getattr(self._embed_policy, "policies", None)
+        if policies is None or len(policies) < 2:
+            return "unknown"
+        circuit = policies[1]
+        status = getattr(circuit, "status", None)
+        return str(getattr(status, "name", "unknown"))
 
     @staticmethod
     def clear_embedding_cache() -> None:

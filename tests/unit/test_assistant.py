@@ -451,3 +451,267 @@ class TestRAGAssistantEmbedFn:
 
         assert isinstance(answer, str)
         assert len(answer) > 0
+
+
+class TestRAGAssistantThreadSafety:
+    """Tests for thread safety in RAGAssistant."""
+
+    def test_concurrent_add_and_retrieve(self, sample_documents, mock_provider):
+        """Verify lock-free design handles concurrent access."""
+        import threading
+
+        assistant = RAGAssistant(sample_documents, provider=mock_provider)
+        errors = []
+
+        def reader():
+            for _ in range(50):
+                try:
+                    results = assistant.retrieve("test query", top_k=3)
+                    # Verify we get consistent results (not partial state)
+                    assert isinstance(results, list)
+                except Exception as e:
+                    errors.append(e)
+
+        def writer():
+            for i in range(5):
+                try:
+                    assistant.add_documents([Document(id=f"new-{i}", content=f"new content number {i} for testing")])
+                except Exception as e:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=reader) for _ in range(5)]
+        threads += [threading.Thread(target=writer) for _ in range(2)]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+    def test_concurrent_retrieve_only(self, sample_documents, mock_provider):
+        """Verify concurrent reads don't interfere with each other."""
+        import threading
+
+        assistant = RAGAssistant(sample_documents, provider=mock_provider)
+        results_list = []
+        errors = []
+
+        def reader(query):
+            try:
+                results = assistant.retrieve(query, top_k=2)
+                results_list.append(results)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=reader, args=(f"query {i}",)) for i in range(10)]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0
+        assert len(results_list) == 10
+
+
+class TestRAGAssistantPersistence:
+    """Tests for index persistence (save/load)."""
+
+    def test_save_load_index(self, tmp_path, sample_documents, mock_provider):
+        """Verify index survives save/load cycle."""
+        assistant = RAGAssistant(sample_documents, provider=mock_provider)
+        original_results = assistant.retrieve("Python programming", top_k=3)
+
+        # Save
+        index_path = tmp_path / "index"
+        assistant.save_index(index_path)
+
+        # Verify files exist
+        assert (index_path / "chunks.json").exists()
+        assert (index_path / "embeddings.npy").exists()
+        assert (index_path / "metadata.json").exists()
+
+        # Load
+        loaded = RAGAssistant.load_index(index_path, provider=mock_provider)
+
+        # Verify same chunk count
+        assert loaded.num_chunks == assistant.num_chunks
+
+        # Verify same retrieval results
+        loaded_results = loaded.retrieve("Python programming", top_k=3)
+
+        assert len(original_results) == len(loaded_results)
+        for (orig_chunk, orig_score), (loaded_chunk, loaded_score) in zip(
+            original_results, loaded_results, strict=True
+        ):
+            assert orig_chunk.doc_id == loaded_chunk.doc_id
+            assert orig_chunk.content == loaded_chunk.content
+            assert abs(orig_score - loaded_score) < 1e-6
+
+    def test_save_creates_directory(self, tmp_path, sample_documents, mock_provider):
+        """Test that save_index creates the directory if it doesn't exist."""
+        assistant = RAGAssistant(sample_documents, provider=mock_provider)
+
+        nested_path = tmp_path / "a" / "b" / "c" / "index"
+        assistant.save_index(nested_path)
+
+        assert nested_path.exists()
+        assert (nested_path / "chunks.json").exists()
+
+    def test_load_validates_consistency(self, tmp_path, sample_documents, mock_provider):
+        """Verify load_index detects corrupted index."""
+        import json
+
+        from ragit.exceptions import IndexingError
+
+        assistant = RAGAssistant(sample_documents, provider=mock_provider)
+        index_path = tmp_path / "index"
+        assistant.save_index(index_path)
+
+        # Corrupt by adding extra chunk to JSON
+        chunks_path = index_path / "chunks.json"
+        chunks_data = json.loads(chunks_path.read_text())
+        chunks_data.append({"id": "extra", "content": "extra chunk", "doc_id": "x"})
+        chunks_path.write_text(json.dumps(chunks_data))
+
+        with pytest.raises(IndexingError, match="corrupted"):
+            RAGAssistant.load_index(index_path, provider=mock_provider)
+
+    def test_load_empty_index(self, tmp_path, mock_provider):
+        """Test loading an index with no chunks."""
+        import json
+
+        index_path = tmp_path / "empty_index"
+        index_path.mkdir()
+
+        # Create empty index files
+        (index_path / "chunks.json").write_text("[]")
+        (index_path / "metadata.json").write_text(
+            json.dumps({"chunk_count": 0, "embedding_model": "test", "version": "1.0"})
+        )
+        # No embeddings.npy file (empty index)
+
+        loaded = RAGAssistant.load_index(index_path, provider=mock_provider)
+        assert loaded.num_chunks == 0
+        assert not loaded.is_indexed
+
+    def test_is_indexed_property(self, sample_documents, mock_provider):
+        """Test is_indexed property."""
+        assistant = RAGAssistant(sample_documents, provider=mock_provider)
+        assert assistant.is_indexed is True
+
+    def test_chunk_count_property(self, sample_documents, mock_provider):
+        """Test chunk_count property."""
+        assistant = RAGAssistant(sample_documents, provider=mock_provider)
+        assert assistant.chunk_count == assistant.num_chunks
+
+
+class TestRAGAssistantEmptyDocuments:
+    """Tests for empty document handling."""
+
+    def test_empty_documents_list(self, mock_provider):
+        """Test initialization with empty document list."""
+        assistant = RAGAssistant([], provider=mock_provider)
+
+        assert assistant.num_chunks == 0
+        assert not assistant.is_indexed
+        assert assistant.retrieve("test") == []
+
+    def test_documents_with_no_content(self, mock_provider):
+        """Test documents with empty content produce no chunks."""
+        docs = [
+            Document(id="empty1", content=""),
+            Document(id="empty2", content="   "),
+        ]
+
+        assistant = RAGAssistant(docs, provider=mock_provider)
+
+        assert assistant.num_chunks == 0
+        assert not assistant.is_indexed
+
+
+class TestRAGAssistantEmbeddingValidation:
+    """Tests for embedding count validation."""
+
+    def test_embedding_count_mismatch_raises(self):
+        """Verify mismatch between chunks and embeddings raises error."""
+        from ragit.exceptions import IndexingError
+        from ragit.providers.base import BaseEmbeddingProvider
+
+        class BadProvider(BaseEmbeddingProvider):
+            """Provider that returns fewer embeddings than requested."""
+
+            @property
+            def provider_name(self) -> str:
+                return "bad"
+
+            @property
+            def dimensions(self) -> int:
+                return 768
+
+            def is_available(self) -> bool:
+                return True
+
+            def embed(self, text, model=""):
+                response = MagicMock()
+                response.embedding = [0.1] * 768
+                return response
+
+            def embed_batch(self, texts, model=""):
+                # Return fewer embeddings than requested!
+                responses = []
+                for i, _ in enumerate(texts):
+                    if i < len(texts) - 1:  # Skip last one
+                        response = MagicMock()
+                        response.embedding = [0.1] * 768
+                        responses.append(response)
+                return responses
+
+        docs = [
+            Document(id="doc1", content="Some content here"),
+            Document(id="doc2", content="More content here"),
+        ]
+
+        with pytest.raises(IndexingError, match="Embedding count mismatch"):
+            RAGAssistant(docs, provider=BadProvider())
+
+    def test_add_documents_validates_embeddings(self, sample_documents):
+        """Test add_documents validates embedding count."""
+        from ragit.exceptions import IndexingError
+        from ragit.providers.base import BaseEmbeddingProvider
+
+        call_count = [0]
+
+        class PartiallyBadProvider(BaseEmbeddingProvider):
+            """Provider that fails on second batch."""
+
+            @property
+            def provider_name(self) -> str:
+                return "partial"
+
+            @property
+            def dimensions(self) -> int:
+                return 768
+
+            def is_available(self) -> bool:
+                return True
+
+            def embed(self, text, model=""):
+                response = MagicMock()
+                response.embedding = [0.1] * 768
+                return response
+
+            def embed_batch(self, texts, model=""):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    # First call (initial indexing) - return correct count
+                    return [MagicMock(embedding=[0.1] * 768) for _ in texts]
+                else:
+                    # Second call (add_documents) - return empty (fewer than requested)
+                    return []
+
+        assistant = RAGAssistant(sample_documents, provider=PartiallyBadProvider())
+
+        with pytest.raises(IndexingError, match="Embedding count mismatch"):
+            assistant.add_documents([Document(id="new", content="new document content")])

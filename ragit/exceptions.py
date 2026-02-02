@@ -24,7 +24,7 @@ class RagitError(Exception):
     ----------
     message : str
         Human-readable error message.
-    original_exception : Exception, optional
+    original_exception : BaseException, optional
         The underlying exception that caused this error.
 
     Examples
@@ -37,7 +37,7 @@ class RagitError(Exception):
     ...         print(f"Caused by: {e.original_exception}")
     """
 
-    def __init__(self, message: str, original_exception: Exception | None = None):
+    def __init__(self, message: str, original_exception: BaseException | None = None):
         self.message = message
         self.original_exception = original_exception
         super().__init__(self._format_message())

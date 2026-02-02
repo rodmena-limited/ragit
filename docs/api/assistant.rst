@@ -3,10 +3,11 @@ RAGAssistant API
 
 The ``RAGAssistant`` class provides a high-level interface for RAG operations.
 
-.. warning::
+.. note::
 
-   ``RAGAssistant`` is **NOT thread-safe**. Each thread should have its own instance.
-   See :doc:`../integration` for thread-safe patterns.
+   ``RAGAssistant`` is **thread-safe** as of v0.11.0. It uses lock-free atomic operations
+   with immutable state, allowing concurrent reads while another thread writes.
+   See :doc:`../integration` for usage patterns.
 
 Class Reference
 ---------------
@@ -165,6 +166,44 @@ Getting Sources with Answers
    for chunk, score in sources:
        print(f"  - {chunk.doc_id} (relevance: {score:.2f})")
 
+Index Persistence
+-----------------
+
+Save and load indexes to avoid re-computing embeddings:
+
+.. code-block:: python
+
+   from ragit import RAGAssistant
+   from ragit.providers import OllamaProvider
+
+   # Build and save index
+   assistant = RAGAssistant("docs/", provider=OllamaProvider())
+   assistant.save_index("./my_index")
+
+   # Load index later (much faster)
+   loaded = RAGAssistant.load_index("./my_index", provider=OllamaProvider())
+   results = loaded.retrieve("query")
+
+Thread Safety
+-------------
+
+RAGAssistant is thread-safe as of v0.11.0:
+
+.. code-block:: python
+
+   import threading
+   from ragit import RAGAssistant
+
+   assistant = RAGAssistant("docs/", provider=provider)
+
+   # Safe: concurrent reads
+   for _ in range(10):
+       threading.Thread(target=lambda: assistant.retrieve("query")).start()
+
+   # Safe: read while writing
+   threading.Thread(target=lambda: assistant.add_documents([doc])).start()
+   threading.Thread(target=lambda: assistant.retrieve("query")).start()
+
 Internal Attributes
 -------------------
 
@@ -172,14 +211,11 @@ These attributes are available but considered internal:
 
 .. code-block:: python
 
-   # Access loaded chunks (immutable tuple)
-   chunks = assistant._chunks
-   print(f"Total chunks: {len(chunks)}")
+   # Access index state (immutable IndexState dataclass)
+   state = assistant._state
+   print(f"Total chunks: {len(state.chunks)}")
+   print(f"Matrix shape: {state.embedding_matrix.shape}")
 
-   # Access embedding matrix (numpy array)
-   matrix = assistant._embedding_matrix
-   print(f"Matrix shape: {matrix.shape}")
-
-   # Access provider
-   provider = assistant.provider
-   print(f"Provider: {provider.provider_name}")
+   # Use public properties instead
+   print(f"Chunk count: {assistant.chunk_count}")
+   print(f"Is indexed: {assistant.is_indexed}")

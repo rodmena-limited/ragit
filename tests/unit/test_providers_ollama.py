@@ -71,11 +71,18 @@ class TestOllamaProviderSession:
         assert session1 is session2
 
     def test_session_headers_with_api_key(self):
-        """Test that session headers include auth when API key is set."""
+        """Test that session headers do NOT include auth (security fix).
+
+        API key is now injected per-request via _get_headers() to prevent
+        potential log exposure in session headers.
+        """
         provider = OllamaProvider(api_key="test-key")
         session = provider.session
-        assert session.headers.get("Authorization") == "Bearer test-key"
+        # API key should NOT be in session headers (security fix)
+        assert "Authorization" not in session.headers
         assert session.headers.get("Content-Type") == "application/json"
+        # API key should be available via _get_headers()
+        assert provider._get_headers()["Authorization"] == "Bearer test-key"
 
     def test_session_headers_without_api_key(self):
         """Test session headers without API key."""
@@ -494,7 +501,7 @@ class TestOllamaProviderEmbedBatchAsync:
         # Before calling async method, model state should be None
         assert provider._current_embed_model is None
 
-        # We can't easily mock trio/httpx async, but we can test that
+        # We can't easily mock asyncio/httpx async, but we can test that
         # the method is properly defined by checking its properties
         assert provider.dimensions == 768  # default
 
@@ -635,3 +642,82 @@ class TestOllamaProviderCache:
 
             with pytest.raises(ValueError, match="Empty embedding"):
                 provider.embed("unique_test_text_for_cache", "model")
+
+
+class TestOllamaProviderContextManager:
+    """Tests for context manager protocol."""
+
+    def test_context_manager_enter_returns_self(self):
+        """Test that __enter__ returns the provider instance."""
+        provider = OllamaProvider()
+
+        with provider as p:
+            assert p is provider
+
+    def test_context_manager_closes_session(self):
+        """Test that __exit__ closes the session."""
+        provider = OllamaProvider()
+        # Initialize session
+        _ = provider.session
+        assert provider._session is not None
+
+        with provider:
+            pass
+
+        assert provider._session is None
+
+    def test_context_manager_closes_on_exception(self):
+        """Test that session is closed even when exception occurs."""
+        provider = OllamaProvider()
+        _ = provider.session
+
+        try:
+            with provider:
+                raise ValueError("Test error")
+        except ValueError:
+            pass
+
+        assert provider._session is None
+
+    def test_context_manager_usage_pattern(self):
+        """Test typical usage pattern with context manager."""
+        with OllamaProvider(base_url="http://test:11434") as provider:
+            assert provider.provider_name == "ollama"
+            assert provider._session is None  # Session not yet created
+
+            # Access session (lazy init)
+            _ = provider.session
+            assert provider._session is not None
+
+        # After context, session should be closed
+        assert provider._session is None
+
+
+class TestOllamaProviderSecurityFixes:
+    """Tests for security-related fixes."""
+
+    def test_api_key_not_in_session_headers(self):
+        """Test that API key is NOT stored in session headers."""
+        provider = OllamaProvider(api_key="secret-api-key")
+
+        # Access session to trigger lazy initialization
+        session = provider.session
+
+        # API key should NOT be in session headers (security fix)
+        assert "Authorization" not in session.headers
+
+    def test_api_key_in_per_request_headers(self):
+        """Test that _get_headers() includes API key."""
+        provider = OllamaProvider(api_key="secret-api-key")
+
+        headers = provider._get_headers(include_auth=True)
+
+        assert headers["Authorization"] == "Bearer secret-api-key"
+
+    def test_api_key_can_be_excluded_from_request(self):
+        """Test that auth can be excluded from specific requests."""
+        provider = OllamaProvider(api_key="secret-api-key")
+
+        headers = provider._get_headers(include_auth=False)
+
+        assert "Authorization" not in headers

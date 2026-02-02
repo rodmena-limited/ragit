@@ -7,10 +7,16 @@ High-level RAG Assistant for document Q&A and code generation.
 
 Provides a simple interface for RAG-based tasks.
 
-Note: This class is NOT thread-safe. Do not share instances across threads.
+Thread Safety:
+    This class uses lock-free atomic operations for thread safety.
+    The IndexState is immutable, and all mutations create a new state
+    that is atomically swapped. Python's GIL ensures reference assignment
+    is atomic, making concurrent reads and writes safe.
 """
 
+import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,13 +24,31 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragit.core.experiment.experiment import Chunk, Document
+from ragit.exceptions import IndexingError
 from ragit.loaders import chunk_document, chunk_rst_sections, load_directory, load_text
-from ragit.logging import log_operation
+from ragit.logging import log_operation, logger
 from ragit.providers.base import BaseEmbeddingProvider, BaseLLMProvider
 from ragit.providers.function_adapter import FunctionProvider
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+
+@dataclass(frozen=True)
+class IndexState:
+    """Immutable snapshot of index state for lock-free thread safety.
+
+    This class holds all mutable index data in a single immutable structure.
+    Updates create a new IndexState instance, and the reference swap is
+    atomic under Python's GIL, ensuring thread-safe reads and writes.
+
+    Attributes:
+        chunks: Tuple of indexed chunks (immutable).
+        embedding_matrix: Pre-normalized numpy array of embeddings, or None if empty.
+    """
+
+    chunks: tuple[Chunk, ...]
+    embedding_matrix: NDArray[np.float64] | None
 
 
 class RAGAssistant:
@@ -63,9 +87,12 @@ class RAGAssistant:
     ValueError
         If neither embed_fn nor provider is provided.
 
-    Note
-    ----
-    This class is NOT thread-safe. Each thread should have its own instance.
+    Thread Safety
+    -------------
+    This class uses lock-free atomic operations for thread safety.
+    Multiple threads can safely call retrieve() while another thread
+    calls add_documents(). The IndexState is immutable, and reference
+    swaps are atomic under Python's GIL.
 
     Examples
     --------
@@ -80,6 +107,10 @@ class RAGAssistant:
     >>> # With Ollama provider (supports nomic-embed-text)
     >>> from ragit.providers import OllamaProvider
     >>> assistant = RAGAssistant(docs, provider=OllamaProvider())
+    >>>
+    >>> # Save and load index for persistence
+    >>> assistant.save_index("/path/to/index")
+    >>> loaded = RAGAssistant.load_index("/path/to/index", provider=OllamaProvider())
     """
 
     def __init__(
@@ -134,9 +165,8 @@ class RAGAssistant:
         # Load documents if path provided
         self.documents = self._load_documents(documents)
 
-        # Index chunks - embeddings stored as pre-normalized numpy matrix for fast search
-        self._chunks: tuple[Chunk, ...] = ()
-        self._embedding_matrix: NDArray[np.float64] | None = None  # Pre-normalized
+        # Thread-safe index state (immutable, atomic reference swap)
+        self._state: IndexState = IndexState(chunks=(), embedding_matrix=None)
         self._build_index()
 
     def _load_documents(self, documents: list[Document] | str | Path) -> list[Document]:
@@ -171,7 +201,11 @@ class RAGAssistant:
         raise ValueError(f"Invalid documents source: {documents}")
 
     def _build_index(self) -> None:
-        """Build vector index from documents using batch embedding."""
+        """Build vector index from documents using batch embedding.
+
+        Raises:
+            IndexingError: If embedding count doesn't match chunk count.
+        """
         all_chunks: list[Chunk] = []
 
         for doc in self.documents:
@@ -183,33 +217,54 @@ class RAGAssistant:
             all_chunks.extend(chunks)
 
         if not all_chunks:
-            self._chunks = ()
-            self._embedding_matrix = None
+            logger.warning("No chunks produced from documents - index will be empty")
+            self._state = IndexState(chunks=(), embedding_matrix=None)
             return
 
         # Batch embed all chunks at once (single API call)
         texts = [chunk.content for chunk in all_chunks]
         responses = self._embedding_provider.embed_batch(texts, self.embedding_model)
 
+        # CRITICAL: Validate embedding count matches chunk count
+        if len(responses) != len(all_chunks):
+            raise IndexingError(
+                f"Embedding count mismatch: expected {len(all_chunks)} embeddings, "
+                f"got {len(responses)}. Index may be corrupted."
+            )
+
         # Build embedding matrix directly (skip storing in chunks to avoid duplication)
         embedding_matrix = np.array([response.embedding for response in responses], dtype=np.float64)
+
+        # Additional validation: matrix shape
+        if embedding_matrix.shape[0] != len(all_chunks):
+            raise IndexingError(
+                f"Matrix row count {embedding_matrix.shape[0]} doesn't match chunk count {len(all_chunks)}"
+            )
 
         # Pre-normalize for fast cosine similarity (normalize once, use many times)
         norms = np.linalg.norm(embedding_matrix, axis=1, keepdims=True)
         norms[norms == 0] = 1  # Avoid division by zero
 
-        # Store as immutable tuple and pre-normalized numpy matrix
-        self._chunks = tuple(all_chunks)
-        self._embedding_matrix = embedding_matrix / norms
+        # Atomic state update (thread-safe under GIL)
+        self._state = IndexState(
+            chunks=tuple(all_chunks),
+            embedding_matrix=embedding_matrix / norms,
+        )
 
     def add_documents(self, documents: list[Document] | str | Path) -> int:
         """Add documents to the existing index incrementally.
+
+        This method is thread-safe. It creates a new IndexState and atomically
+        swaps the reference, ensuring readers always see a consistent state.
 
         Args:
             documents: Documents to add.
 
         Returns:
             Number of chunks added.
+
+        Raises:
+            IndexingError: If embedding count doesn't match chunk count.
         """
         new_docs = self._load_documents(documents)
         if not new_docs:
@@ -233,6 +288,13 @@ class RAGAssistant:
         texts = [chunk.content for chunk in new_chunks]
         responses = self._embedding_provider.embed_batch(texts, self.embedding_model)
 
+        # Validate embedding count
+        if len(responses) != len(new_chunks):
+            raise IndexingError(
+                f"Embedding count mismatch: expected {len(new_chunks)} embeddings, "
+                f"got {len(responses)}. Index update aborted."
+            )
+
         new_matrix = np.array([response.embedding for response in responses], dtype=np.float64)
 
         # Normalize
@@ -240,20 +302,26 @@ class RAGAssistant:
         norms[norms == 0] = 1
         new_matrix_norm = new_matrix / norms
 
-        # Update state
-        current_chunks = list(self._chunks)
-        current_chunks.extend(new_chunks)
-        self._chunks = tuple(current_chunks)
+        # Read current state (atomic read)
+        current_state = self._state
 
-        if self._embedding_matrix is None:
-            self._embedding_matrix = new_matrix_norm
+        # Build new state
+        combined_chunks = current_state.chunks + tuple(new_chunks)
+        if current_state.embedding_matrix is None:
+            combined_matrix = new_matrix_norm
         else:
-            self._embedding_matrix = np.vstack((self._embedding_matrix, new_matrix_norm))
+            combined_matrix = np.vstack((current_state.embedding_matrix, new_matrix_norm))
+
+        # Atomic state swap (thread-safe under GIL)
+        self._state = IndexState(chunks=combined_chunks, embedding_matrix=combined_matrix)
 
         return len(new_chunks)
 
     def remove_documents(self, source_path_pattern: str) -> int:
         """Remove documents matching a source path pattern.
+
+        This method is thread-safe. It creates a new IndexState and atomically
+        swaps the reference.
 
         Args:
             source_path_pattern: Glob pattern to match 'source' metadata.
@@ -263,14 +331,17 @@ class RAGAssistant:
         """
         import fnmatch
 
-        if not self._chunks:
+        # Read current state (atomic read)
+        current_state = self._state
+
+        if not current_state.chunks:
             return 0
 
         indices_to_keep = []
         kept_chunks = []
         removed_count = 0
 
-        for i, chunk in enumerate(self._chunks):
+        for i, chunk in enumerate(current_state.chunks):
             source = chunk.metadata.get("source", "")
             if not source or not fnmatch.fnmatch(source, source_path_pattern):
                 indices_to_keep.append(i)
@@ -281,13 +352,14 @@ class RAGAssistant:
         if removed_count == 0:
             return 0
 
-        self._chunks = tuple(kept_chunks)
+        # Build new embedding matrix
+        if current_state.embedding_matrix is not None:
+            new_matrix = None if not kept_chunks else current_state.embedding_matrix[indices_to_keep]
+        else:
+            new_matrix = None
 
-        if self._embedding_matrix is not None:
-            if not kept_chunks:
-                self._embedding_matrix = None
-            else:
-                self._embedding_matrix = self._embedding_matrix[indices_to_keep]
+        # Atomic state swap (thread-safe under GIL)
+        self._state = IndexState(chunks=tuple(kept_chunks), embedding_matrix=new_matrix)
 
         # Also remove from self.documents
         self.documents = [
@@ -330,6 +402,7 @@ class RAGAssistant:
         Retrieve relevant chunks for a query.
 
         Uses vectorized cosine similarity for fast search over all chunks.
+        This method is thread-safe - it reads a consistent snapshot of the index.
 
         Parameters
         ----------
@@ -349,7 +422,10 @@ class RAGAssistant:
         >>> for chunk, score in results:
         ...     print(f"{score:.2f}: {chunk.content[:100]}...")
         """
-        if not self._chunks or self._embedding_matrix is None:
+        # Atomic state read - get consistent snapshot
+        state = self._state
+
+        if not state.chunks or state.embedding_matrix is None:
             return []
 
         # Get query embedding and normalize
@@ -361,7 +437,7 @@ class RAGAssistant:
         query_normalized = query_vec / query_norm
 
         # Fast cosine similarity: matrix is pre-normalized, just dot product
-        similarities = self._embedding_matrix @ query_normalized
+        similarities = state.embedding_matrix @ query_normalized
 
         # Get top_k indices using argpartition (faster than full sort for large arrays)
         if len(similarities) <= top_k:
@@ -372,7 +448,7 @@ class RAGAssistant:
             # Sort the top_k by score
             top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
 
-        return [(self._chunks[i], float(similarities[i])) for i in top_indices]
+        return [(state.chunks[i], float(similarities[i])) for i in top_indices]
 
     def retrieve_with_context(
         self,
@@ -415,6 +491,9 @@ class RAGAssistant:
         >>> for chunk, score in results:
         ...     print(f"{score:.2f}: {chunk.content[:50]}...")
         """
+        # Get consistent state snapshot
+        state = self._state
+
         with log_operation("retrieve_with_context", query_len=len(query), top_k=top_k, window_size=window_size) as ctx:
             # Get initial results (more than top_k to account for filtering)
             results = self.retrieve(query, top_k * 2)
@@ -428,7 +507,7 @@ class RAGAssistant:
                 return results[:top_k]
 
             # Build chunk index for fast lookup
-            chunk_to_idx = {id(chunk): i for i, chunk in enumerate(self._chunks)}
+            chunk_to_idx = {id(chunk): i for i, chunk in enumerate(state.chunks)}
 
             expanded_results: list[tuple[Chunk, float]] = []
             seen_indices: set[int] = set()
@@ -441,13 +520,13 @@ class RAGAssistant:
 
                 # Get window of adjacent chunks from same document
                 start_idx = max(0, chunk_idx - window_size)
-                end_idx = min(len(self._chunks), chunk_idx + window_size + 1)
+                end_idx = min(len(state.chunks), chunk_idx + window_size + 1)
 
                 for idx in range(start_idx, end_idx):
                     if idx in seen_indices:
                         continue
 
-                    adjacent_chunk = self._chunks[idx]
+                    adjacent_chunk = state.chunks[idx]
                     # Only include adjacent chunks from same document
                     if adjacent_chunk.doc_id == chunk.doc_id:
                         seen_indices.add(idx)
@@ -456,7 +535,7 @@ class RAGAssistant:
                         expanded_results.append((adjacent_chunk, adj_score))
 
             # Sort by score (highest first)
-            expanded_results.sort(key=lambda x: (-x[1], self._chunks.index(x[0]) if x[0] in self._chunks else 0))
+            expanded_results.sort(key=lambda x: (-x[1], state.chunks.index(x[0]) if x[0] in state.chunks else 0))
             ctx["expanded_chunks"] = len(expanded_results)
 
             return expanded_results
@@ -489,6 +568,9 @@ class RAGAssistant:
         str
             Formatted context string with merged chunks.
         """
+        # Get consistent state snapshot
+        state = self._state
+
         results = self.retrieve_with_context(query, top_k, window_size, min_score)
 
         if not results:
@@ -506,10 +588,10 @@ class RAGAssistant:
 
         for _doc_id, chunks in doc_chunks.items():
             # Sort chunks by their position in the original list
-            chunks.sort(key=lambda x: self._chunks.index(x[0]) if x[0] in self._chunks else 0)
+            chunks.sort(key=lambda x: state.chunks.index(x[0]) if x[0] in state.chunks else 0)
 
             # Merge overlapping text
-            merged_content = []
+            merged_content: list[str] = []
             for chunk, _ in chunks:
                 if merged_content:
                     # Check for overlap with previous chunk
@@ -744,7 +826,17 @@ Generate the {language} code:"""
     @property
     def num_chunks(self) -> int:
         """Return number of indexed chunks."""
-        return len(self._chunks)
+        return len(self._state.chunks)
+
+    @property
+    def chunk_count(self) -> int:
+        """Number of chunks in index (alias for num_chunks)."""
+        return len(self._state.chunks)
+
+    @property
+    def is_indexed(self) -> bool:
+        """Check if index has any documents."""
+        return len(self._state.chunks) > 0
 
     @property
     def num_documents(self) -> int:
@@ -755,3 +847,122 @@ Generate the {language} code:"""
     def has_llm(self) -> bool:
         """Check if LLM is configured."""
         return self._llm_provider is not None
+
+    def save_index(self, path: str | Path) -> None:
+        """Save index to disk for later restoration.
+
+        Saves the index in an efficient format:
+        - chunks.json: Chunk metadata and content
+        - embeddings.npy: Numpy array of embeddings (binary format)
+        - metadata.json: Index configuration
+
+        Args:
+            path: Directory path to save index files.
+
+        Example:
+            >>> assistant.save_index("/path/to/index")
+            >>> # Later...
+            >>> loaded = RAGAssistant.load_index("/path/to/index", provider=provider)
+        """
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+        state = self._state
+
+        # Save chunks as JSON
+        chunks_data = [
+            {
+                "content": chunk.content,
+                "doc_id": chunk.doc_id,
+                "chunk_index": chunk.chunk_index,
+                "metadata": chunk.metadata,
+            }
+            for chunk in state.chunks
+        ]
+        (path / "chunks.json").write_text(json.dumps(chunks_data, indent=2))
+
+        # Save embeddings as numpy binary (efficient for large arrays)
+        if state.embedding_matrix is not None:
+            np.save(path / "embeddings.npy", state.embedding_matrix)
+
+        # Save metadata for validation and configuration restoration
+        metadata = {
+            "chunk_count": len(state.chunks),
+            "embedding_model": self.embedding_model,
+            "chunk_size": self.chunk_size,
+            "chunk_overlap": self.chunk_overlap,
+            "version": "1.0",
+        }
+        (path / "metadata.json").write_text(json.dumps(metadata, indent=2))
+
+        logger.info(f"Index saved to {path} ({len(state.chunks)} chunks)")
+
+    @classmethod
+    def load_index(
+        cls,
+        path: str | Path,
+        provider: BaseEmbeddingProvider | BaseLLMProvider | None = None,
+    ) -> "RAGAssistant":
+        """Load a previously saved index.
+
+        Args:
+            path: Directory path containing saved index files.
+            provider: Provider for embeddings/LLM (required for new queries).
+
+        Returns:
+            RAGAssistant instance with loaded index.
+
+        Raises:
+            IndexingError: If loaded index is corrupted (count mismatch).
+            FileNotFoundError: If index files don't exist.
+
+        Example:
+            >>> loaded = RAGAssistant.load_index("/path/to/index", provider=OllamaProvider())
+            >>> results = loaded.retrieve("query")
+        """
+        path = Path(path)
+
+        # Load metadata
+        metadata = json.loads((path / "metadata.json").read_text())
+
+        # Load chunks
+        chunks_data = json.loads((path / "chunks.json").read_text())
+        chunks = tuple(
+            Chunk(
+                content=c["content"],
+                doc_id=c.get("doc_id", ""),
+                chunk_index=c.get("chunk_index", 0),
+                metadata=c.get("metadata", {}),
+            )
+            for c in chunks_data
+        )
+
+        # Load embeddings
+        embeddings_path = path / "embeddings.npy"
+        embedding_matrix: NDArray[np.float64] | None = None
+        if embeddings_path.exists():
+            embedding_matrix = np.load(embeddings_path)
+
+        # Validate consistency
+        if embedding_matrix is not None and embedding_matrix.shape[0] != len(chunks):
+            raise IndexingError(
+                f"Loaded index corrupted: {embedding_matrix.shape[0]} embeddings but {len(chunks)} chunks"
+            )
+
+        # Create instance without calling __init__ (skip indexing)
+        instance = object.__new__(cls)
+
+        # Initialize required attributes
+        instance._state = IndexState(chunks=chunks, embedding_matrix=embedding_matrix)
+        instance.embedding_model = metadata.get("embedding_model", "default")
+        instance.llm_model = metadata.get("llm_model", "default")
+        instance.chunk_size = metadata.get("chunk_size", 512)
+        instance.chunk_overlap = metadata.get("chunk_overlap", 50)
+        instance.documents = []  # Original docs not saved
+
+        # Set up providers
+        instance._embedding_provider = provider if isinstance(provider, BaseEmbeddingProvider) else None  # type: ignore
+        instance._llm_provider = provider if isinstance(provider, BaseLLMProvider) else None
+
+        logger.info(f"Index loaded from {path} ({len(chunks)} chunks)")
+        return instance

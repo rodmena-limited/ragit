@@ -67,6 +67,45 @@ answer = assistant.ask(question, top_k=3)         # Requires generate_fn/LLM
 code = assistant.generate_code(request)           # Requires generate_fn/LLM
 ```
 
+## Index Persistence
+
+Save and load indexes to avoid re-computing embeddings:
+
+```python
+# Save index to disk
+assistant.save_index("./my_index")
+
+# Load index later (much faster than re-indexing)
+loaded = RAGAssistant.load_index("./my_index", provider=OllamaProvider())
+results = loaded.retrieve("query")
+```
+
+## Thread Safety
+
+RAGAssistant is thread-safe. Multiple threads can safely read while another writes:
+
+```python
+import threading
+
+assistant = RAGAssistant("docs/", provider=OllamaProvider())
+
+# Safe: concurrent reads and writes
+threading.Thread(target=lambda: assistant.retrieve("query")).start()
+threading.Thread(target=lambda: assistant.add_documents([new_doc])).start()
+```
+
+## Resource Management
+
+Use context managers for automatic cleanup:
+
+```python
+from ragit.providers import OllamaProvider
+
+with OllamaProvider() as provider:
+    response = provider.generate("Hello", model="llama3")
+# Session automatically closed
+```
+
 ## Document Loading
 
 ```python

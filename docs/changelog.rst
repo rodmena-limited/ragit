@@ -3,26 +3,53 @@ Changelog
 
 All notable changes to ragit are documented here.
 
-Version 0.7.4 (Current)
------------------------
+For the complete changelog with migration guides, see `CHANGELOG.md <https://github.com/rodmena-limited/ragit/blob/main/CHANGELOG.md>`_.
 
-**Performance Optimizations**
+Version 0.11.0 (Current)
+------------------------
 
-- Added HTTP connection pooling via ``requests.Session()`` for faster sequential requests
-- Added async parallel embedding via ``embed_batch_async()`` using trio + httpx (5-10x faster for large batches)
-- Added LRU cache for embeddings (2048 entries) to avoid redundant API calls
-- Added ``use_cache`` parameter to ``OllamaProvider`` (default: True)
-- Added ``clear_embedding_cache()`` and ``embedding_cache_info()`` static methods
-- Added ``close()`` method for explicit resource cleanup
+**Thread Safety & Persistence**
 
-**New Dependencies**
+- RAGAssistant is now thread-safe using lock-free atomic operations
+- Added ``save_index()`` and ``load_index()`` for index persistence
+- Added context manager protocol to OllamaProvider
+- Added ``is_indexed`` and ``chunk_count`` properties
 
-- Added ``trio>=0.24.0`` for async concurrency
-- Added ``httpx>=0.27.0`` for async HTTP client
+**Security**
 
-**Code Quality**
+- API keys no longer stored in session headers (prevents log exposure)
 
-- 166 tests with 90%+ coverage
+**Dependencies Removed**
+
+- Removed ``scikit-learn`` (unused)
+- Removed ``pandas`` (unused)
+- Removed ``trio`` (async works with ``asyncio.run()``)
+
+Version 0.10.0
+--------------
+
+**Resilience & Error Handling**
+
+- Added retry with exponential backoff via ``resilient-circuit``
+- Added circuit breaker pattern for fault tolerance
+- Added custom exception hierarchy (``RagitError``, ``ProviderError``, ``IndexingError``)
+- Added structured logging with ``log_operation()`` context manager
+
+Version 0.9.0
+-------------
+
+**Breaking: Removed SentenceTransformersProvider**
+
+- Use ``OllamaProvider`` with nomic-embed-text instead
+- Removed ``sentence-transformers`` dependency
+
+Version 0.8.0
+-------------
+
+**Breaking: Explicit Provider Required**
+
+- Must provide ``embed_fn``, ``generate_fn``, or ``provider``
+- No more implicit Ollama fallback
 
 Version 0.7.1
 -------------
@@ -38,7 +65,7 @@ Version 0.7.1
 
 - Full mypy --strict compliance
 - 94% test coverage with 150 tests
-- Thread-safety documentation for non-thread-safe classes
+- Thread-safety documentation (now thread-safe as of v0.11.0)
 
 Version 0.7.0
 -------------

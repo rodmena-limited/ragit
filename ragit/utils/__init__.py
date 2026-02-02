@@ -12,8 +12,6 @@ from datetime import datetime
 from math import floor
 from typing import Any
 
-import pandas as pd
-
 
 def get_hashable_repr(dct: dict[str, object]) -> tuple[tuple[str, object, float, int | None], ...]:
     """
@@ -60,26 +58,6 @@ def remove_duplicates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             duplicate_tracker.add(elem)
             deduplicated_items.append(items[ind])
     return deduplicated_items
-
-
-def handle_missing_values_in_combinations(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Handle missing values in experiment data combinations.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Experiment data with combinations being explored.
-
-    Returns
-    -------
-    pd.DataFrame
-        Data with NaN values properly replaced.
-    """
-    if "chunk_overlap" in df.columns:
-        df["chunk_overlap"] = df["chunk_overlap"].map(lambda el: 0 if pd.isna(el) else el)
-
-    return df
 
 
 def datetime_str_to_epoch_time(timestamp: str | int) -> str | int:

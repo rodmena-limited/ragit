@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2025-02-02
+
+### Added
+
+- **Index persistence**: Save and load indexes to/from disk
+  - `save_index(path)` - saves chunks (JSON) + embeddings (numpy binary) + metadata
+  - `load_index(path, provider)` - restores a saved index with validation
+  - Enables caching expensive embedding computations
+
+- **Thread-safe operations**: RAGAssistant now uses lock-free atomic operations
+  - Immutable `IndexState` dataclass holds all index data
+  - Reference swaps are atomic under Python's GIL
+  - Safe to call `retrieve()` while another thread calls `add_documents()`
+
+- **Context manager for OllamaProvider**: Guaranteed resource cleanup
+  ```python
+  with OllamaProvider() as provider:
+      result = provider.generate("Hello", model="llama3")
+  # Session automatically closed
+  ```
+
+- **New properties on RAGAssistant**:
+  - `is_indexed` - check if index has any documents
+  - `chunk_count` - number of chunks in index (alias for `num_chunks`)
+
+- **Embedding count validation**: Raises `IndexingError` if embedding count doesn't match chunk count, preventing silent index corruption
+
+- **Empty document handling**: Logs warning when no chunks are produced from documents
+
+### Changed
+
+- **RAGAssistant is now thread-safe** (previously documented as NOT thread-safe)
+- API key no longer stored in session headers (security improvement)
+- Docstring examples updated to use `asyncio` instead of `trio`
+
+### Removed
+
+- `scikit-learn` dependency (was unused)
+- `pandas` dependency (was unused)
+- `trio` dependency (async methods work with `asyncio.run()`)
+- `handle_missing_values_in_combinations()` from utils (unused)
+
+### Security
+
+- **API key exposure fix**: API keys are now injected per-request via `_get_headers()` rather than stored in session headers, preventing potential exposure in logs or error messages
+
 ## [0.10.0] - 2025-01-27
 
 ### Breaking Changes

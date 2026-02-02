@@ -33,12 +33,9 @@ dynamic = ["version"]
 dependencies = [
     "requests>=2.31.0",
     "numpy>=1.26.0",
-    "pandas>=2.2.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
-    "scikit-learn>=1.5.0",
     "tqdm>=4.66.0",
-    "trio>=0.24.0",
     "httpx>=0.27.0",
     "resilient-circuit>=0.4.7",
 ]

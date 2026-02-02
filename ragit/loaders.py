@@ -282,7 +282,7 @@ def chunk_by_separator(
     """
     effective_doc_id = doc_id or generate_document_id(text)
     parts = text.split(separator)
-    chunks = []
+    chunks: list[Chunk] = []
     current_pos = 0
 
     for _idx, part in enumerate(parts):

@@ -107,6 +107,28 @@ Creating Embeddings
    for i, resp in enumerate(responses):
        print(f"  {i}: {resp.dimensions} dimensions")
 
+Resource Management
+^^^^^^^^^^^^^^^^^^^
+
+``OllamaProvider`` supports the context manager protocol for automatic cleanup:
+
+.. code-block:: python
+
+   from ragit.providers import OllamaProvider
+
+   # Recommended: Use context manager for automatic cleanup
+   with OllamaProvider() as provider:
+       response = provider.generate("Hello", model="llama3")
+       embeddings = provider.embed_batch(texts, model="mxbai-embed-large")
+   # Session automatically closed on exit
+
+   # Alternative: Manual cleanup
+   provider = OllamaProvider()
+   try:
+       response = provider.generate("Hello", model="llama3")
+   finally:
+       provider.close()
+
 Performance Features
 ^^^^^^^^^^^^^^^^^^^^
 
@@ -118,22 +140,18 @@ Performance Features
 
    from ragit.providers import OllamaProvider
 
-   provider = OllamaProvider()
-
-   # All requests reuse the same TCP connection
-   for text in texts:
-       provider.embed(text, model="mxbai-embed-large")
-
-   # Explicit cleanup (optional - auto-closes on garbage collection)
-   provider.close()
+   with OllamaProvider() as provider:
+       # All requests reuse the same TCP connection
+       for text in texts:
+           provider.embed(text, model="mxbai-embed-large")
 
 **Async Parallel Embedding**
 
-For large batches, use ``embed_batch_async()`` with trio for 5-10x faster embedding:
+For large batches, use ``embed_batch_async()`` with asyncio:
 
 .. code-block:: python
 
-   import trio
+   import asyncio
    from ragit.providers import OllamaProvider
 
    provider = OllamaProvider()
@@ -142,11 +160,10 @@ For large batches, use ``embed_batch_async()`` with trio for 5-10x faster embedd
        texts = ["doc1...", "doc2...", "doc3..."]
        return await provider.embed_batch_async(
            texts,
-           model="mxbai-embed-large",
-           max_concurrent=10  # Adjust based on server capacity
+           model="mxbai-embed-large"
        )
 
-   results = trio.run(embed_many)
+   results = asyncio.run(embed_many())
 
 **Embedding Cache**
 
